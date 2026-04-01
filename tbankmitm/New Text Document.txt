@@ -1,0 +1,81 @@
+from mitmproxy import http
+import json
+from datetime import datetime
+import re
+
+def pretty_json(text: str) -> str:
+    """Красиво форматирует JSON или возвращает обрезанный текст"""
+    try:
+        data = json.loads(text)
+        return json.dumps(data, ensure_ascii=False, indent=2, ensure_ascii=False)
+    except:
+        return text[:600] + ("..." if len(text) > 600 else "")
+
+def is_relevant_url(url: str) -> bool:
+    """Проверяем, интересный ли это эндпоинт (платежи, чеки, операции)"""
+    url_lower = url.lower()
+    keywords = [
+        "pay", "payment", "receipt", "kvit", "cheque", "statement", 
+        "history", "operations", "details", "document", "tracking", 
+        "transaction", "sbp", "success", "confirm"
+    ]
+    return any(k in url_lower for k in keywords)
+
+def response(flow: http.HTTPFlow) -> None:
+    """Логируем ВСЕ ответы от банка (JSON + HTML + другие)"""
+    url = flow.request.pretty_url
+    if "tbank" not in url.lower() and "tinkoff" not in url.lower():
+        return
+
+    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    print(f"\n{'═' * 90}")
+    print(f"🔹 [RESPONSE] {flow.request.method} {url}")
+    print(f"   Status: {flow.response.status_code} | Time: {timestamp}")
+
+    content_type = flow.response.headers.get("content-type", "").lower()
+
+    if "application/json" in content_type:
+        print("   📦 JSON RESPONSE")
+        print(pretty_json(flow.response.text))
+        
+        # Автоматически ищем важные ID (чтобы ты сразу видел paymentId и т.д.)
+        try:
+            data = json.loads(flow.response.text)
+            for key in ["paymentId", "id", "operationId", "transactionId", "receiptId", "trackingId", "documentId"]:
+                if key in str(data).lower():
+                    print(f"   → НАЙДЕН КЛЮЧ {key.upper()}: {json.dumps(data, ensure_ascii=False)[:400]}...")
+        except:
+            pass
+
+    elif "text/html" in content_type:
+        print("   📄 HTML RESPONSE (страница чека / успеха / формы)")
+        html_preview = flow.response.text[:900] + ("..." if len(flow.response.text) > 900 else "")
+        print(html_preview)
+        
+    else:
+        print(f"   📌 OTHER ({content_type}) | Body size: {len(flow.response.text)}")
+
+    if is_relevant_url(url):
+        print("   🔥 РЕЛЕВАНТНЫЙ ЭНДПОИНТ — СКОРЕЕ ВСЁ ЧЕК ИЛИ УСПЕХ!")
+
+def request(flow: http.HTTPFlow) -> None:
+    """Логируем запросы (особенно body при /pay)"""
+    url = flow.request.pretty_url
+    if "tbank" not in url.lower() and "tinkoff" not in url.lower():
+        return
+
+    print(f"\n➤ [REQUEST]  {flow.request.method} {url}")
+
+    if flow.request.text:
+        try:
+            print("   📤 JSON REQUEST BODY:")
+            print(pretty_json(flow.request.text))
+        except:
+            print("   📤 BODY (не JSON):", flow.request.text[:500])
+
+    if is_relevant_url(url):
+        print("   🔥 РЕЛЕВАНТНЫЙ ЗАПРОС")
+
+print("🚀 [LOGGER v2] Скрипт загружен — ловим ВСЁ: JSON, HTML, API переводов и чеков")
+print("   Запусти mitmproxy с этим скриптом + transfer.py")
+print("   Сделай перевод → нажми «Квитанция» → пришли мне сюда весь лог")

@@ -1,0 +1,250 @@
+{
+  "_comment": "Логотипы из brands-prod / bms-logo-prod; часть через imgproxy как в приложении Т‑Банка.",
+  "sbp": {
+    "merchant": {
+      "name": "СБП",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vdHJhbnNmZXJzLWMxLnBuZw=="
+    }
+  },
+  "sber": {
+    "merchant": {
+      "name": "Сбербанк",
+      "logo": "https://brands-prod.cdn-tinkoff.ru/general_logo/sber.png"
+    }
+  },
+  "tbank": {
+    "merchant": {
+      "name": "Т-Банк",
+      "logo": "https://brands-prod.cdn-tinkoff.ru/general_logo/tinkoff-new.png"
+    }
+  },
+  "alfa": {
+    "merchant": {
+      "name": "Альфа-Банк",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vYWxmYWJhbmsucG5n"
+    }
+  },
+  "vtb": {
+    "merchant": {
+      "name": "ВТБ",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vdnRiYmFuay5wbmc="
+    }
+  },
+  "psb": {
+    "merchant": {
+      "name": "ПСБ",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vcHJvbXN2eWF6YmFuay5wbmc="
+    }
+  },
+  "yandex": {
+    "merchant": {
+      "name": "Яндекс Банк",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28veWEtYmFuay5wbmc="
+    }
+  },
+  "wb": {
+    "merchant": {
+      "name": "WB Банк",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vd2lsZGJlcnJpZXMtYmFuay5wbmc="
+    }
+  },
+  "sovcom": {
+    "merchant": {
+      "name": "Совкомбанк",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vc292Y29tYmFuay5wbmc="
+    }
+  },
+  "akbars": {
+    "merchant": {
+      "name": "Ак Барс Банк",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vYWtiLnBuZw=="
+    }
+  },
+  "mts": {
+    "merchant": {
+      "name": "МТС Деньги",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vbXRzZGVuZ2kucG5n"
+    }
+  },
+  "amobayl": {
+    "merchant": {
+      "name": "Неизвестный (amobayl)",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vYW1vYmF5bC5wbmc="
+    }
+  },
+  "eskhata": {
+    "merchant": {
+      "name": "Эсхата Банк",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vZXNraGF0YS1uZXcucG5n"
+    }
+  },
+  "uralsib": {
+    "merchant": {
+      "name": "Уралсиб",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vdXJhbHNpYi5wbmc="
+    }
+  },
+  "fora": {
+    "merchant": {
+      "name": "Фора-Банк",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vZm9yYWJhbmsucG5n"
+    }
+  },
+  "genbank": {
+    "merchant": {
+      "name": "Генбанк",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vZ2VuYmFuay1uZXcucG5n"
+    }
+  },
+  "abs_rossiya": {
+    "merchant": {
+      "name": "АБ Россия",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vYWtiX3Jvc3NpeWEucG5n"
+    }
+  },
+  "cupis": {
+    "merchant": {
+      "name": "ЦУПИС",
+      "logo": "https://bms-logo-prod.t-static.ru/general_logo/1cupis-mplat.png"
+    }
+  },
+  "rncb": {
+    "merchant": {
+      "name": "РНКБ",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vcm5jYi5wbmc="
+    }
+  },
+  "akcept": {
+    "merchant": {
+      "name": "Банк Акцепт",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vYWtjZXB0LnBuZw=="
+    }
+  },
+  "domrf": {
+    "merchant": {
+      "name": "Дом.РФ",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vZG9tcmZiYW5rLnBuZw=="
+    }
+  },
+  "ubrir": {
+    "merchant": {
+      "name": "УБРИР",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vdWJyaXIucG5n"
+    }
+  },
+  "crediteurope": {
+    "merchant": {
+      "name": "Кредит Европа Банк (Россия)",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28va3JlZGl0LWV2cm9wYS1iYW5rLnBuZw=="
+    }
+  },
+  "pochtabank": {
+    "merchant": {
+      "name": "Почта Банк",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vcG9jaHRhLWJhbmsucG5n"
+    }
+  },
+  "cifra": {
+    "merchant": {
+      "name": "Цифра банк",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vY2lmcmEtYmFuay5wbmc="
+    }
+  },
+  "spitamen": {
+    "merchant": {
+      "name": "Спитамен Банк",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vc3BpdGFtZW5iYW5rLnBuZw=="
+    }
+  },
+  "mkb": {
+    "merchant": {
+      "name": "МКБ",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vbWtiLW5ldy0yLnBuZw=="
+    }
+  },
+  "rshb": {
+    "merchant": {
+      "name": "РСХБ",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vcm9zc2VsaG96YmFuay5wbmc="
+    }
+  },
+  "primbank": {
+    "merchant": {
+      "name": "Банк Приморье",
+      "logo": "https://bms-logo-prod.t-static.ru/general_logo/primbank-new.png"
+    }
+  },
+  "primsocbank": {
+    "merchant": {
+      "name": "СКБ Примсоцбанк",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vcHJpbS1zb2MtYmFuay5wbmc="
+    }
+  },
+  "bankspb": {
+    "merchant": {
+      "name": "Банк Санкт-Петербург",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vYmFua3NwYi5wbmc="
+    }
+  },
+  "rocketbank": {
+    "merchant": {
+      "name": "Рокетбанк",
+      "logo": "https://bms-logo-prod.t-static.ru/general_logo/rocketbank.png"
+    }
+  },
+  "raiffeisen": {
+    "merchant": {
+      "name": "Райффайзен Банк",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vcmFpZmZlaXNlbi5wbmc="
+    }
+  },
+  "mbb": {
+    "merchant": {
+      "name": "МББ Банк",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vbWJicnUucG5n"
+    }
+  },
+  "centrinvest": {
+    "merchant": {
+      "name": "Банк «Центр-инвест»",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vY2VudHJpbnZlc3QucG5n"
+    }
+  },
+  "octo": {
+    "merchant": {
+      "name": "Окто-банк",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vb2N0by1iYW5rLnBuZw=="
+    }
+  },
+  "yoomoney": {
+    "merchant": {
+      "name": "ЮMoney",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28veW9vbW9uZXkucG5n"
+    }
+  },
+  "gazprom": {
+    "merchant": {
+      "name": "Газпромбанк",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vZ2F6cHJvbWJhbmsucG5n"
+    }
+  },
+  "mts_bank": {
+    "merchant": {
+      "name": "МТС Банк",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vbXRzLWJhbmsucG5n"
+    }
+  },
+  "ozon": {
+    "merchant": {
+      "name": "Озон Банк",
+      "logo": "https://brands-prod.cdn-tinkoff.ru/general_logo/finance-ozon-2.png"
+    }
+  },
+  "otp": {
+    "merchant": {
+      "name": "ОТП Банк",
+      "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vb3RwYmFuay1uZXcucG5n"
+    }
+  },
+  "custom": {}
+}

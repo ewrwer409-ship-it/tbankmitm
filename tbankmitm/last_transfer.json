@@ -1,0 +1,962 @@
+{
+  "amount": 123123.0,
+  "transaction_id": "UNIFIED_1775076450782",
+  "date_full": "01.04.2026 23:47:30",
+  "receiver_phone": "+7 (927) 445-76-16",
+  "receiver_name": "Кирилл Д.",
+  "sender_name": "Ирина Кузнецова",
+  "sender_account": "408178106977004241",
+  "bank_receiver": "Озон+Банк+(Ozon)",
+  "operation_type": "sbp",
+  "kvit_number": "122-362-554",
+  "sbp_operation_id": "B6091204730923080B00001300117005",
+  "last_pdf_path": "receipt_1775072695483_20260401_224455.pdf",
+  "type": "sbp",
+  "payment_id": "0393228931199425",
+  "timestamp_ms": 1774047600246,
+  "transfer_completed": true,
+  "fake_history": [
+    {
+      "id": "UNIFIED_1775076450782",
+      "operationId": {
+        "value": "UNIFIED_1775076450782",
+        "source": "PrimeAuth"
+      },
+      "isExternalCard": false,
+      "account": "5860068322",
+      "card": "383947501",
+      "ucid": "1386102627",
+      "cardNumber": "220070******6404",
+      "authorizationId": "UNIFIED_1775076450782",
+      "operationTime": {
+        "milliseconds": 1775076452979
+      },
+      "debitingTime": {
+        "milliseconds": 1775076452979
+      },
+      "type": "Debit",
+      "status": "OK",
+      "amount": {
+        "value": 123123,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "accountAmount": {
+        "value": 123123,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "cashback": 0.0,
+      "cashbackAmount": {
+        "value": 0.0,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "idSourceType": "Prime",
+      "mcc": 0,
+      "mccString": "0000",
+      "description": "Кирилл Д.",
+      "category": {
+        "id": "45",
+        "name": "Другое"
+      },
+      "brand": {
+        "id": "11250",
+        "name": "Кирилл Д.",
+        "logo": "https://brands-prod.cdn-tinkoff.ru/general_logo/finance-ozon-2.png",
+        "baseColor": "f12e16",
+        "fileLink": "https://brands-prod.cdn-tinkoff.ru/general_logo/finance-ozon-2.png"
+      },
+      "spendingCategory": {
+        "id": "24",
+        "name": "Переводы",
+        "icon": "transfers-c1",
+        "baseColor": "4FC5DF"
+      },
+      "senderDetails": "",
+      "subcategory": "Кирилл Д.",
+      "loyaltyBonus": [],
+      "loyaltyPayment": [],
+      "loyaltyBonusSummary": {
+        "amount": 0.0
+      },
+      "categoryInfo": {
+        "bankCategory": {
+          "id": "24",
+          "language": "ru",
+          "name": "Переводы",
+          "baseColor": "4FC5DF",
+          "fileLink": "https://brands-prod.cdn-tinkoff.ru/general_logo/transfers-c1.png"
+        },
+        "metacategory": {
+          "id": "12",
+          "language": "ru",
+          "name": "Финансы",
+          "baseColor": "14B8AF",
+          "fileLink": "https://bms-logo-prod.t-static.ru/general_logo/finance-3-meta.png"
+        },
+        "criteria": {
+          "bulkVariety": {
+            "type": "Description",
+            "value": "Кирилл Д."
+          }
+        }
+      },
+      "group": "TRANSFER",
+      "subgroup": {
+        "id": "F1",
+        "name": "Переводы"
+      },
+      "offers": [],
+      "cardPresent": false,
+      "isHce": false,
+      "isSuspicious": false,
+      "virtualPaymentType": 0,
+      "hasStatement": true,
+      "hasShoppingReceipt": false,
+      "additionalInfo": [
+        {
+          "fieldName": "Тип перевода",
+          "fieldValue": "Система быстрых платежей"
+        }
+      ],
+      "isDispute": false,
+      "operationTransferred": false,
+      "isOffline": false,
+      "icon": "https://brands-prod.cdn-tinkoff.ru/general_logo/finance-ozon-2.png",
+      "analyticsStatus": "NotSpecified",
+      "isTemplatable": false,
+      "trancheCreationAllowed": false,
+      "merchantKey": "FAKE_SBP_DEBIT_UNIFIED_1775076450782",
+      "posId": "585",
+      "typeSerno": 151,
+      "tags": [],
+      "isInner": false,
+      "isAuto": false,
+      "merges": [],
+      "documents": [
+        "Statement"
+      ],
+      "pdf_path": "receipt_UNIFIED_1775_20260401_234730.pdf",
+      "date_full": "01.04.2026 23:47:30",
+      "receiver_phone": "+7 (927) 445-76-16",
+      "receiver_name": "Кирилл Д.",
+      "bank_receiver": "Озон+Банк+(Ozon)"
+    },
+    {
+      "id": "UNIFIED_1775075423586",
+      "operationId": {
+        "value": "UNIFIED_1775075423586",
+        "source": "PrimeAuth"
+      },
+      "isExternalCard": false,
+      "account": "5860068322",
+      "card": "383947501",
+      "ucid": "1386102627",
+      "cardNumber": "220070******6404",
+      "authorizationId": "UNIFIED_1775075423586",
+      "operationTime": {
+        "milliseconds": 1775075425745
+      },
+      "debitingTime": {
+        "milliseconds": 1775075425745
+      },
+      "type": "Debit",
+      "status": "OK",
+      "amount": {
+        "value": 20000,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "accountAmount": {
+        "value": 20000,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "cashback": 0.0,
+      "cashbackAmount": {
+        "value": 0.0,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "idSourceType": "Prime",
+      "mcc": 0,
+      "mccString": "0000",
+      "description": "Кирилл Д.",
+      "category": {
+        "id": "45",
+        "name": "Другое"
+      },
+      "brand": {
+        "id": "11250",
+        "name": "Кирилл Д.",
+        "logo": "https://brands-prod.cdn-tinkoff.ru/general_logo/finance-ozon-2.png",
+        "baseColor": "f12e16",
+        "fileLink": "https://brands-prod.cdn-tinkoff.ru/general_logo/finance-ozon-2.png"
+      },
+      "spendingCategory": {
+        "id": "24",
+        "name": "Переводы",
+        "icon": "transfers-c1",
+        "baseColor": "4FC5DF"
+      },
+      "senderDetails": "",
+      "subcategory": "Кирилл Д.",
+      "loyaltyBonus": [],
+      "loyaltyPayment": [],
+      "loyaltyBonusSummary": {
+        "amount": 0.0
+      },
+      "categoryInfo": {
+        "bankCategory": {
+          "id": "24",
+          "language": "ru",
+          "name": "Переводы",
+          "baseColor": "4FC5DF",
+          "fileLink": "https://brands-prod.cdn-tinkoff.ru/general_logo/transfers-c1.png"
+        },
+        "metacategory": {
+          "id": "12",
+          "language": "ru",
+          "name": "Финансы",
+          "baseColor": "14B8AF",
+          "fileLink": "https://bms-logo-prod.t-static.ru/general_logo/finance-3-meta.png"
+        },
+        "criteria": {
+          "bulkVariety": {
+            "type": "Description",
+            "value": "Кирилл Д."
+          }
+        }
+      },
+      "group": "TRANSFER",
+      "subgroup": {
+        "id": "F1",
+        "name": "Переводы"
+      },
+      "offers": [],
+      "cardPresent": false,
+      "isHce": false,
+      "isSuspicious": false,
+      "virtualPaymentType": 0,
+      "hasStatement": true,
+      "hasShoppingReceipt": false,
+      "additionalInfo": [
+        {
+          "fieldName": "Тип перевода",
+          "fieldValue": "Система быстрых платежей"
+        }
+      ],
+      "isDispute": false,
+      "operationTransferred": false,
+      "isOffline": false,
+      "icon": "https://brands-prod.cdn-tinkoff.ru/general_logo/finance-ozon-2.png",
+      "analyticsStatus": "NotSpecified",
+      "isTemplatable": false,
+      "trancheCreationAllowed": false,
+      "merchantKey": "FAKE_SBP_DEBIT_UNIFIED_1775075423586",
+      "posId": "585",
+      "typeSerno": 151,
+      "tags": [],
+      "isInner": false,
+      "isAuto": false,
+      "merges": [],
+      "documents": [
+        "Statement"
+      ],
+      "pdf_path": "receipt_UNIFIED_1775_20260401_233023.pdf",
+      "date_full": "01.04.2026 23:30:23",
+      "receiver_phone": "+7 (927) 445-76-16",
+      "receiver_name": "Кирилл Д.",
+      "bank_receiver": "Озон+Банк+(Ozon)"
+    },
+    {
+      "id": "UNIFIED_1775072695483",
+      "operationId": {
+        "value": "UNIFIED_1775072695483",
+        "source": "PrimeAuth"
+      },
+      "isExternalCard": false,
+      "account": "5860068322",
+      "card": "383947501",
+      "ucid": "1386102627",
+      "cardNumber": "220070******6404",
+      "authorizationId": "UNIFIED_1775072695483",
+      "operationTime": {
+        "milliseconds": 1775072697821
+      },
+      "debitingTime": {
+        "milliseconds": 1775072697821
+      },
+      "type": "Debit",
+      "status": "OK",
+      "amount": {
+        "value": 99999,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "accountAmount": {
+        "value": 99999,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "cashback": 0.0,
+      "cashbackAmount": {
+        "value": 0.0,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "idSourceType": "Prime",
+      "mcc": 0,
+      "mccString": "0000",
+      "description": "Софья Х.",
+      "category": {
+        "id": "45",
+        "name": "Другое"
+      },
+      "brand": {
+        "id": "11250",
+        "name": "Софья Х.",
+        "logo": "https://brands-prod.cdn-tinkoff.ru/general_logo/tinkoff-new.png",
+        "baseColor": "f12e16",
+        "fileLink": "https://brands-prod.cdn-tinkoff.ru/general_logo/tinkoff-new.png"
+      },
+      "spendingCategory": {
+        "id": "24",
+        "name": "Переводы",
+        "icon": "transfers-c1",
+        "baseColor": "4FC5DF"
+      },
+      "senderDetails": "",
+      "subcategory": "Софья Х.",
+      "loyaltyBonus": [],
+      "loyaltyPayment": [],
+      "loyaltyBonusSummary": {
+        "amount": 0.0
+      },
+      "categoryInfo": {
+        "bankCategory": {
+          "id": "24",
+          "language": "ru",
+          "name": "Переводы",
+          "baseColor": "4FC5DF",
+          "fileLink": "https://brands-prod.cdn-tinkoff.ru/general_logo/transfers-c1.png"
+        },
+        "metacategory": {
+          "id": "12",
+          "language": "ru",
+          "name": "Финансы",
+          "baseColor": "14B8AF",
+          "fileLink": "https://bms-logo-prod.t-static.ru/general_logo/finance-3-meta.png"
+        },
+        "criteria": {
+          "bulkVariety": {
+            "type": "Description",
+            "value": "Софья Х."
+          }
+        }
+      },
+      "group": "TRANSFER",
+      "subgroup": {
+        "id": "F1",
+        "name": "Переводы"
+      },
+      "offers": [],
+      "cardPresent": false,
+      "isHce": false,
+      "isSuspicious": false,
+      "virtualPaymentType": 0,
+      "hasStatement": true,
+      "hasShoppingReceipt": false,
+      "additionalInfo": [
+        {
+          "fieldName": "Тип перевода",
+          "fieldValue": "Система быстрых платежей"
+        }
+      ],
+      "isDispute": false,
+      "operationTransferred": false,
+      "isOffline": false,
+      "icon": "https://brands-prod.cdn-tinkoff.ru/general_logo/tinkoff-new.png",
+      "analyticsStatus": "NotSpecified",
+      "isTemplatable": false,
+      "trancheCreationAllowed": false,
+      "merchantKey": "FAKE_SBP_DEBIT_UNIFIED_1775072695483",
+      "posId": "585",
+      "typeSerno": 151,
+      "tags": [],
+      "isInner": false,
+      "isAuto": false,
+      "merges": [],
+      "documents": [
+        "Statement"
+      ],
+      "pdf_path": "receipt_1775072695483_20260401_224455.pdf",
+      "receiver_phone": "+7 (986) 908-61-79",
+      "receiver_name": "Софья Х.",
+      "bank_receiver": "ОТП+Банк"
+    },
+    {
+      "id": "UNIFIED_1775071925869",
+      "operationId": {
+        "value": "UNIFIED_1775071925869",
+        "source": "PrimeAuth"
+      },
+      "isExternalCard": false,
+      "account": "5860068322",
+      "card": "383947501",
+      "ucid": "1386102627",
+      "cardNumber": "220070******6404",
+      "authorizationId": "UNIFIED_1775071925869",
+      "operationTime": {
+        "milliseconds": 1775071928334
+      },
+      "debitingTime": {
+        "milliseconds": 1775071928335
+      },
+      "type": "Debit",
+      "status": "OK",
+      "amount": {
+        "value": 100000,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "accountAmount": {
+        "value": 100000,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "cashback": 0.0,
+      "cashbackAmount": {
+        "value": 0.0,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "idSourceType": "Prime",
+      "mcc": 0,
+      "mccString": "0000",
+      "description": "Кирилл Д.",
+      "category": {
+        "id": "45",
+        "name": "Другое"
+      },
+      "brand": {
+        "id": "11250",
+        "name": "Кирилл Д.",
+        "logo": "https://brands-prod.cdn-tinkoff.ru/general_logo/sber.png",
+        "baseColor": "f12e16",
+        "fileLink": "https://brands-prod.cdn-tinkoff.ru/general_logo/sber.png"
+      },
+      "spendingCategory": {
+        "id": "24",
+        "name": "Переводы",
+        "icon": "transfers-c1",
+        "baseColor": "4FC5DF"
+      },
+      "senderDetails": "",
+      "subcategory": "Кирилл Д.",
+      "loyaltyBonus": [],
+      "loyaltyPayment": [],
+      "loyaltyBonusSummary": {
+        "amount": 0.0
+      },
+      "categoryInfo": {
+        "bankCategory": {
+          "id": "24",
+          "language": "ru",
+          "name": "Переводы",
+          "baseColor": "4FC5DF",
+          "fileLink": "https://brands-prod.cdn-tinkoff.ru/general_logo/transfers-c1.png"
+        },
+        "metacategory": {
+          "id": "12",
+          "language": "ru",
+          "name": "Финансы",
+          "baseColor": "14B8AF",
+          "fileLink": "https://bms-logo-prod.t-static.ru/general_logo/finance-3-meta.png"
+        },
+        "criteria": {
+          "bulkVariety": {
+            "type": "Description",
+            "value": "Кирилл Д."
+          }
+        }
+      },
+      "group": "TRANSFER",
+      "subgroup": {
+        "id": "F1",
+        "name": "Переводы"
+      },
+      "offers": [],
+      "cardPresent": false,
+      "isHce": false,
+      "isSuspicious": false,
+      "virtualPaymentType": 0,
+      "hasStatement": true,
+      "hasShoppingReceipt": false,
+      "additionalInfo": [
+        {
+          "fieldName": "Тип перевода",
+          "fieldValue": "Система быстрых платежей"
+        }
+      ],
+      "isDispute": false,
+      "operationTransferred": false,
+      "isOffline": false,
+      "icon": "https://brands-prod.cdn-tinkoff.ru/general_logo/sber.png",
+      "analyticsStatus": "NotSpecified",
+      "isTemplatable": false,
+      "trancheCreationAllowed": false,
+      "merchantKey": "FAKE_SBP_DEBIT_UNIFIED_1775071925869",
+      "posId": "585",
+      "typeSerno": 151,
+      "tags": [],
+      "isInner": false,
+      "isAuto": false,
+      "merges": [],
+      "documents": [
+        "Statement"
+      ],
+      "pdf_path": "receipt_1775071925869_20260401_223205.pdf",
+      "receiver_phone": "+7 (927) 445-76-16",
+      "receiver_name": "Кирилл Д.",
+      "bank_receiver": "Сбербанк"
+    },
+    {
+      "id": "UNIFIED_1775052048956",
+      "operationId": {
+        "value": "UNIFIED_1775052048956",
+        "source": "PrimeAuth"
+      },
+      "isExternalCard": false,
+      "account": "5860068322",
+      "card": "383947501",
+      "ucid": "1386102627",
+      "cardNumber": "220070******6404",
+      "authorizationId": "UNIFIED_1775052048956",
+      "operationTime": {
+        "milliseconds": 1775052051614
+      },
+      "debitingTime": {
+        "milliseconds": 1775052051614
+      },
+      "type": "Debit",
+      "status": "OK",
+      "amount": {
+        "value": 1000000,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "accountAmount": {
+        "value": 1000000,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "cashback": 0.0,
+      "cashbackAmount": {
+        "value": 0.0,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "idSourceType": "Prime",
+      "mcc": 0,
+      "mccString": "0000",
+      "description": "Андрей Д.",
+      "category": {
+        "id": "45",
+        "name": "Другое"
+      },
+      "brand": {
+        "id": "11250",
+        "name": "Андрей Д.",
+        "logo": "https://brands-prod.cdn-tinkoff.ru/general_logo/sber.png",
+        "baseColor": "f12e16",
+        "fileLink": "https://brands-prod.cdn-tinkoff.ru/general_logo/sber.png"
+      },
+      "spendingCategory": {
+        "id": "24",
+        "name": "Переводы",
+        "icon": "transfers-c1",
+        "baseColor": "4FC5DF"
+      },
+      "senderDetails": "",
+      "subcategory": "Андрей Д.",
+      "loyaltyBonus": [],
+      "loyaltyPayment": [],
+      "loyaltyBonusSummary": {
+        "amount": 0.0
+      },
+      "categoryInfo": {
+        "bankCategory": {
+          "id": "24",
+          "language": "ru",
+          "name": "Переводы",
+          "baseColor": "4FC5DF",
+          "fileLink": "https://brands-prod.cdn-tinkoff.ru/general_logo/transfers-c1.png"
+        },
+        "metacategory": {
+          "id": "12",
+          "language": "ru",
+          "name": "Финансы",
+          "baseColor": "14B8AF",
+          "fileLink": "https://bms-logo-prod.t-static.ru/general_logo/finance-3-meta.png"
+        },
+        "criteria": {
+          "bulkVariety": {
+            "type": "Description",
+            "value": "Андрей Д."
+          }
+        }
+      },
+      "group": "TRANSFER",
+      "subgroup": {
+        "id": "F1",
+        "name": "Переводы"
+      },
+      "offers": [],
+      "cardPresent": false,
+      "isHce": false,
+      "isSuspicious": false,
+      "virtualPaymentType": 0,
+      "hasStatement": true,
+      "hasShoppingReceipt": false,
+      "additionalInfo": [
+        {
+          "fieldName": "Тип перевода",
+          "fieldValue": "Система быстрых платежей"
+        }
+      ],
+      "isDispute": false,
+      "operationTransferred": false,
+      "isOffline": false,
+      "icon": "https://brands-prod.cdn-tinkoff.ru/general_logo/sber.png",
+      "analyticsStatus": "NotSpecified",
+      "isTemplatable": false,
+      "trancheCreationAllowed": false,
+      "merchantKey": "FAKE_SBP_DEBIT_UNIFIED_1775052048956",
+      "posId": "585",
+      "typeSerno": 151,
+      "tags": [],
+      "isInner": false,
+      "isAuto": false,
+      "merges": [],
+      "documents": [
+        "Statement"
+      ],
+      "pdf_path": "receipt_1775052048956_20260401_170048.pdf"
+    },
+    {
+      "id": "UNIFIED_1775032957786",
+      "operationId": {
+        "value": "UNIFIED_1775032957786",
+        "source": "PrimeAuth"
+      },
+      "isExternalCard": false,
+      "account": "5860068322",
+      "card": "383947501",
+      "ucid": "1386102627",
+      "cardNumber": "220070******6404",
+      "authorizationId": "UNIFIED_1775032957786",
+      "operationTime": {
+        "milliseconds": 1775032960282
+      },
+      "debitingTime": {
+        "milliseconds": 1775032960282
+      },
+      "type": "Debit",
+      "status": "OK",
+      "amount": {
+        "value": 1000000,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "accountAmount": {
+        "value": 1000000,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "cashback": 0.0,
+      "cashbackAmount": {
+        "value": 0.0,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "idSourceType": "Prime",
+      "mcc": 0,
+      "mccString": "0000",
+      "description": "Максим Ч.",
+      "category": {
+        "id": "45",
+        "name": "Другое"
+      },
+      "brand": {
+        "id": "11250",
+        "name": "Максим Ч.",
+        "logo": "https://brands-prod.cdn-tinkoff.ru/general_logo/tinkoff-new.png",
+        "baseColor": "f12e16",
+        "fileLink": "https://brands-prod.cdn-tinkoff.ru/general_logo/tinkoff-new.png"
+      },
+      "spendingCategory": {
+        "id": "24",
+        "name": "Переводы",
+        "icon": "transfers-c1",
+        "baseColor": "4FC5DF"
+      },
+      "senderDetails": "",
+      "subcategory": "Максим Ч.",
+      "loyaltyBonus": [],
+      "loyaltyPayment": [],
+      "loyaltyBonusSummary": {
+        "amount": 0.0
+      },
+      "categoryInfo": {
+        "bankCategory": {
+          "id": "24",
+          "language": "ru",
+          "name": "Переводы",
+          "baseColor": "4FC5DF",
+          "fileLink": "https://brands-prod.cdn-tinkoff.ru/general_logo/transfers-c1.png"
+        },
+        "metacategory": {
+          "id": "12",
+          "language": "ru",
+          "name": "Финансы",
+          "baseColor": "14B8AF",
+          "fileLink": "https://bms-logo-prod.t-static.ru/general_logo/finance-3-meta.png"
+        },
+        "criteria": {
+          "bulkVariety": {
+            "type": "Description",
+            "value": "Максим Ч."
+          }
+        }
+      },
+      "group": "TRANSFER",
+      "subgroup": {
+        "id": "F1",
+        "name": "Переводы"
+      },
+      "offers": [],
+      "cardPresent": false,
+      "isHce": false,
+      "isSuspicious": false,
+      "virtualPaymentType": 0,
+      "hasStatement": true,
+      "hasShoppingReceipt": false,
+      "additionalInfo": [
+        {
+          "fieldName": "Тип перевода",
+          "fieldValue": "Система быстрых платежей"
+        }
+      ],
+      "isDispute": false,
+      "operationTransferred": false,
+      "isOffline": false,
+      "icon": "https://brands-prod.cdn-tinkoff.ru/general_logo/tinkoff-new.png",
+      "analyticsStatus": "NotSpecified",
+      "isTemplatable": false,
+      "trancheCreationAllowed": false,
+      "merchantKey": "FAKE_SBP_DEBIT_UNIFIED_1775032957786",
+      "posId": "585",
+      "typeSerno": 151,
+      "tags": [],
+      "isInner": false,
+      "isAuto": false,
+      "merges": [],
+      "documents": [
+        "Statement"
+      ],
+      "pdf_path": "receipt_1775032957786_20260401_114237.pdf"
+    },
+    {
+      "id": "UNIFIED_1774982858474",
+      "operationId": {
+        "value": "UNIFIED_1774982858474",
+        "source": "PrimeAuth"
+      },
+      "isExternalCard": false,
+      "account": "5860068322",
+      "card": "383947501",
+      "ucid": "1386102627",
+      "cardNumber": "220070******6404",
+      "authorizationId": "UNIFIED_1774982858474",
+      "operationTime": {
+        "milliseconds": 1774982860804
+      },
+      "debitingTime": {
+        "milliseconds": 1774982860804
+      },
+      "type": "Debit",
+      "status": "OK",
+      "amount": {
+        "value": 999999,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "accountAmount": {
+        "value": 999999,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "cashback": 0.0,
+      "cashbackAmount": {
+        "value": 0.0,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "idSourceType": "Prime",
+      "mcc": 0,
+      "mccString": "0000",
+      "description": "Светлана Д.",
+      "category": {
+        "id": "45",
+        "name": "Другое"
+      },
+      "brand": {
+        "id": "11250",
+        "name": "Светлана Д.",
+        "logo": "https://brands-prod.cdn-tinkoff.ru/general_logo/tinkoff-new.png",
+        "baseColor": "f12e16",
+        "fileLink": "https://brands-prod.cdn-tinkoff.ru/general_logo/tinkoff-new.png"
+      },
+      "spendingCategory": {
+        "id": "24",
+        "name": "Переводы",
+        "icon": "transfers-c1",
+        "baseColor": "4FC5DF"
+      },
+      "senderDetails": "",
+      "subcategory": "Светлана Д.",
+      "loyaltyBonus": [],
+      "loyaltyPayment": [],
+      "loyaltyBonusSummary": {
+        "amount": 0.0
+      },
+      "categoryInfo": {
+        "bankCategory": {
+          "id": "24",
+          "language": "ru",
+          "name": "Переводы",
+          "baseColor": "4FC5DF",
+          "fileLink": "https://brands-prod.cdn-tinkoff.ru/general_logo/transfers-c1.png"
+        },
+        "metacategory": {
+          "id": "12",
+          "language": "ru",
+          "name": "Финансы",
+          "baseColor": "14B8AF",
+          "fileLink": "https://bms-logo-prod.t-static.ru/general_logo/finance-3-meta.png"
+        },
+        "criteria": {
+          "bulkVariety": {
+            "type": "Description",
+            "value": "Светлана Д."
+          }
+        }
+      },
+      "group": "TRANSFER",
+      "subgroup": {
+        "id": "F1",
+        "name": "Переводы"
+      },
+      "offers": [],
+      "cardPresent": false,
+      "isHce": false,
+      "isSuspicious": false,
+      "virtualPaymentType": 0,
+      "hasStatement": true,
+      "hasShoppingReceipt": false,
+      "additionalInfo": [
+        {
+          "fieldName": "Тип перевода",
+          "fieldValue": "Система быстрых платежей"
+        }
+      ],
+      "isDispute": false,
+      "operationTransferred": false,
+      "isOffline": false,
+      "icon": "https://brands-prod.cdn-tinkoff.ru/general_logo/tinkoff-new.png",
+      "analyticsStatus": "NotSpecified",
+      "isTemplatable": false,
+      "trancheCreationAllowed": false,
+      "merchantKey": "FAKE_SBP_DEBIT_UNIFIED_1774982858474",
+      "posId": "585",
+      "typeSerno": 151,
+      "tags": [],
+      "isInner": false,
+      "isAuto": false,
+      "merges": [],
+      "documents": [
+        "Statement"
+      ],
+      "pdf_path": "receipt_1774982858474_20260331_214738.pdf"
+    }
+  ],
+  "bank_logo": "https://brands-prod.cdn-tinkoff.ru/general_logo/finance-ozon-2.png",
+  "merchant_name": null,
+  "merchant_logo": null,
+  "is_merchant_payment": false
+}

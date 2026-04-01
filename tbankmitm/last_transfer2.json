@@ -1,0 +1,150 @@
+{
+  "amount": 8888.0,
+  "transaction_id": "UNIFIED_1774973625527",
+  "date_full": "31.03.2026 19:13:45",
+  "receiver_phone": "+7 (962) 683-28-68",
+  "receiver_name": "Матвей Т.",
+  "sender_name": "Мария П.",
+  "sender_account": "408178104905936301",
+  "bank_receiver": "Альфа-Банк",
+  "bank_logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vYWxmYWJhbmsucG5n",
+  "merchant_name": null,
+  "merchant_logo": null,
+  "is_merchant_payment": false,
+  "kvit_number": "969-804",
+  "last_pdf_path": "receipt_UNIFIED_1774973625527_20260331_191345.pdf",
+  "fake_history": [
+    {
+      "id": "UNIFIED_1774973625527",
+      "operationId": {
+        "value": "UNIFIED_1774973625527",
+        "source": "PrimeAuth"
+      },
+      "isExternalCard": false,
+      "account": "5860068322",
+      "card": "383947501",
+      "ucid": "1386102627",
+      "cardNumber": "220070******6404",
+      "authorizationId": "UNIFIED_1774973625527",
+      "operationTime": {
+        "milliseconds": 1774973627589
+      },
+      "debitingTime": {
+        "milliseconds": 1774973627589
+      },
+      "type": "Debit",
+      "status": "OK",
+      "amount": {
+        "value": 8888,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "accountAmount": {
+        "value": 8888,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "cashback": 0.0,
+      "cashbackAmount": {
+        "value": 0.0,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "idSourceType": "Prime",
+      "mcc": 0,
+      "mccString": "0000",
+      "description": "Матвей Т.",
+      "category": {
+        "id": "45",
+        "name": "Другое"
+      },
+      "brand": {
+        "id": "11250",
+        "name": "Матвей Т.",
+        "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vYWxmYWJhbmsucG5n",
+        "baseColor": "f12e16",
+        "fileLink": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vYWxmYWJhbmsucG5n"
+      },
+      "spendingCategory": {
+        "id": "24",
+        "name": "Переводы",
+        "icon": "transfers-c1",
+        "baseColor": "4FC5DF"
+      },
+      "senderDetails": "",
+      "subcategory": "Матвей Т.",
+      "loyaltyBonus": [],
+      "loyaltyPayment": [],
+      "loyaltyBonusSummary": {
+        "amount": 0.0
+      },
+      "categoryInfo": {
+        "bankCategory": {
+          "id": "24",
+          "language": "ru",
+          "name": "Переводы",
+          "baseColor": "4FC5DF",
+          "fileLink": "https://brands-prod.cdn-tinkoff.ru/general_logo/transfers-c1.png"
+        },
+        "metacategory": {
+          "id": "12",
+          "language": "ru",
+          "name": "Финансы",
+          "baseColor": "14B8AF",
+          "fileLink": "https://bms-logo-prod.t-static.ru/general_logo/finance-3-meta.png"
+        },
+        "criteria": {
+          "bulkVariety": {
+            "type": "Description",
+            "value": "Матвей Т."
+          }
+        }
+      },
+      "group": "TRANSFER",
+      "subgroup": {
+        "id": "F1",
+        "name": "Переводы"
+      },
+      "offers": [],
+      "cardPresent": false,
+      "isHce": false,
+      "isSuspicious": false,
+      "virtualPaymentType": 0,
+      "hasStatement": true,
+      "hasShoppingReceipt": false,
+      "additionalInfo": [
+        {
+          "fieldName": "Тип перевода",
+          "fieldValue": "Система быстрых платежей"
+        }
+      ],
+      "isDispute": false,
+      "operationTransferred": false,
+      "isOffline": false,
+      "icon": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vYWxmYWJhbmsucG5n",
+      "analyticsStatus": "NotSpecified",
+      "isTemplatable": false,
+      "trancheCreationAllowed": false,
+      "merchantKey": "FAKE_SBP_DEBIT_UNIFIED_1774973625527",
+      "posId": "585",
+      "typeSerno": 151,
+      "tags": [],
+      "isInner": false,
+      "isAuto": false,
+      "merges": [],
+      "documents": [
+        "Statement"
+      ],
+      "pdf_path": "receipt_UNIFIED_1774973625527_20260331_191345.pdf"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+Порядок действий
+
+1) Один раз: запустите setup.bat (создаётся venv, ставятся mitmproxy и pymupdf для transfer.py — import fitz).
+   Если venv уже есть, но пишет "mitmproxy not installed" или "No module named 'fitz'" — запустите install_mitm.bat
+
+Веб mybank / дубли карточек: history.py режет вставку для браузера (User-Agent) на api.*.tbank.ru и т.п., если в URL нет явных признаков ленты (graphql, history, operation, …).
+  Вернуть старое поведение (риск дублей): BANK_WEB_INJECT_ALL=1
+  Только GraphQL без фильтра по operationName: BANK_GRAPHQL_INJECT_ALL=1
+  Отключить схлопывание параллельных вставок в браузере: BANK_MANUAL_CROSS_DEBOUNCE=0
+
+Ошибка pip ProxyError / 10061:
+Установка идёт через pip_install_mitm.py: из окружения убираются переменные *proxy*, pip не читает %APPDATA%\pip\pip.ini (PIP_CONFIG_FILE=nul), PyPI — напрямую (--isolated, trusted-host).
+Если всё равно ошибка — в Windows: Параметры — Сеть — Прокси — выключите ручной прокси на время установки или удалите строку proxy= из pip.ini вручную.
+
+2) Каждый раз: запустите start.bat — окно не закрывать, пока нужен прокси.
+   Если при двойном щелчке окно мигнуло и пропало: start.bat перезапускает себя в cmd /k — должно появиться отдельное окно «Mitmproxy».
+   Если cmd уже открыт: start.bat откроет новое окно; всё в текущем окне: start.bat __stay
+   Если «вообще ничего» — свойства start.bat → разблокировать (Unblock), проверьте антивирус и что .bat открывается через cmd.exe.
+
+3) Панель: http://127.0.0.1:8082/admin
+
+4) Телефон: прокси на IP компьютера, порт 8082 + сертификат mitm (через mitm.it в браузере с прокси).
+
+Почему были ошибки «is not recognized»:
+Файлы .bat были в UTF-8 с кириллицей. Старый cmd.exe читает их в кодировке OEM и выполняет обрывки текста как команды.
+Сейчас в .bat только английский (ASCII) — должно работать.
+
+Подсказки на русском — в этом файле; сами setup.bat / start.bat — на английском специально.

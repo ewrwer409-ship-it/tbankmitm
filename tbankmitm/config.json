@@ -1,0 +1,46 @@
+{
+  "name": {
+    "first_name": "Сергей",
+    "last_name": "Олегович",
+    "middle_name": "Владимировна",
+    "full_name": "Кузнецова Ирина Владимировна",
+    "phone": "+79108169323",
+    "phone_number": "9991112233",
+    "first_name_en": "Irina",
+    "last_name_en": "Kuznetsova",
+    "middle_name_en": "Vladimirovna",
+    "gender": "female",
+    "sex_code": "female",
+    "passport_series": "9842",
+    "passport_number": "592805",
+    "passport_issued_by": "ОТДЕЛОМ УФМС ПО КРАСНОДАРСКОМУ КРАЮ",
+    "passport_issue_date": "2015-10-09",
+    "inn": "498861865079",
+    "email": "user65069@mail.ru"
+  },
+  "reki": {
+    "contract": "1025558704",
+    "account": "408178106977004241",
+    "recipient": "Кузнецова Ирина Владимировна",
+    "beneficiary": "Перевод средств по договору № 5456920 Кузнецова Ирина Владимировна НДС не облагается"
+  },
+  "balance": {
+    "new_balance": 0.0,
+    "new_card_number": "6800******2733",
+    "new_collect_sum": 24925,
+    "new_card_number2": "6181******8690"
+  },
+  "transfers": {
+    "total_out_rub": 0
+  },
+  "history": {
+    "show_categories": true,
+    "sort_direction": "asc",
+    "filter_month": 3
+  },
+  "manual": {
+    "income": 32,
+    "expense": 86444,
+    "histogram_sync_with_operations": true
+  }
+}

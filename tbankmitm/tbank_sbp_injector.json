@@ -1,0 +1,19 @@
+{
+  "enabled": true,
+  "amount": 1250.0,
+  "amount_source": "injector",
+  "_amount_source_help": "injector | manual_expense (config.manual.expense) | manual_income (config.manual.income)",
+  "operation_type": "Debit",
+  "neutral_gray_transfer": true,
+  "_neutral_help": "true = Debit + TRANSFER в ленте (перевод, обычно серым). false = ориентироваться на show_as_income",
+  "show_as_income": true,
+  "_help_color": "если neutral_gray_transfer=false: true = Credit (без красного минуса). false = Debit",
+  "bank_preset": "alfa",
+  "counterparty_name": "Давронбек Ж.",
+  "subcategory": "Давронбек Ж.",
+  "operation_id": "777777777777",
+  "merchant_key": "FAKE_SBP_INJECT_777",
+  "time_offset_ms": 2000,
+  "inherit_fields_from_first_operation": true,
+  "adjust_response_totals": true
+}

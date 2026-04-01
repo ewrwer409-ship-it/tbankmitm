@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Добавить операцию - T-Bank</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0b0b0b;
+            color: #ffe37a;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container { max-width: 500px; margin: 0 auto; }
+        h1 { color: #ffd53d; margin-bottom: 20px; font-size: 1.5rem; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; color: #d4b24a; font-size: 0.9rem; }
+        input, select {
+            width: 100%;
+            padding: 12px;
+            background: #0f0f0f;
+            border: 1px solid #3a3a3a;
+            border-radius: 8px;
+            color: #ffe37a;
+            font-size: 1rem;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #ffd53d;
+        }
+        button {
+            width: 100%;
+            padding: 14px;
+            background: #ffd53d;
+            color: #111;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        button:hover { background: #ffe37a; }
+        .success { background: #48bb78; color: white; }
+        .error { background: #f56565; color: white; }
+        #result { margin-top: 20px; padding: 15px; border-radius: 8px; display: none; }
+        .operations-list { margin-top: 30px; }
+        .operation {
+            background: #181818;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #2f2f2f;
+        }
+        .operation .amount { font-weight: bold; }
+        .operation .amount.income { color: #48bb78; }
+        .operation .amount.expense { color: #9ca3af; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>➕ Добавить операцию</h1>
+        
+        <form id="opForm">
+            <div class="form-group">
+                <label>Направление</label>
+                <select id="direction" required>
+                    <option value="out">Расход (перевод в другой банк)</option>
+                    <option value="in">Доход (перевод из другого банка)</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Сумма (₽)</label>
+                <input type="number" id="amount" step="0.01" min="1" placeholder="1500" required>
+            </div>
+            
+            <div class="form-group">
+                <label>Банк</label>
+                <select id="bank_preset" required>
+                    <option value="sber">Сбербанк</option>
+                    <option value="tbank">Т-Банк</option>
+                    <option value="vtb">ВТБ</option>
+                    <option value="alfa">Альфа-Банк</option>
+                    <option value="psb">ПСБ</option>
+                    <option value="yandex">Яндекс Банк</option>
+                    <option value="wb">WB Банк</option>
+                    <option value="custom">Свой</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Название банка (для "Свой")</label>
+                <input type="text" id="bank" placeholder="Например: Банк Пример">
+            </div>
+            
+<div class="form-group">
+                <label>Имя получателя</label>
+                <input type="text" id="title" placeholder="Иван И." required>
+            </div>
+            
+            <div class="form-group">
+                <label>Дата и время (по умолчанию сегодня 00:00)</label>
+                <input type="datetime-local" id="datetime" step="1">
+            </div>
+            
+            <button type="submit">Добавить операцию</button>
+            <button type="button" id="generateReceiptBtn" style="display:none; background:#48bb78; margin-top:10px;" onclick="generateReceipt()">📄 Чек PDF</button>
+        </form>
+        
+        <div id="result"></div>
+        
+        <div class="operations-list">
+            <h2 style="color: #ffd53d; margin-bottom: 15px;">Последние операции</h2>
+            <div id="operationsList"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '';
+        
+        // Set default date to today 00:00
+        const todayMidnight = new Date();
+        todayMidnight.setHours(0,0,0,0);
+        document.getElementById('datetime').value = todayMidnight.toISOString().slice(0,16);
+        
+        let lastOpId = null;
+        
+        document.getElementById('opForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const result = document.getElementById('result');
+            const submitBtn = e.target.querySelector('button[type="submit"]');
+            
+            const data = {
+                direction: document.getElementById('direction').value,
+                amount: parseFloat(document.getElementById('amount').value),
+                bank: document.getElementById('bank').value || '',
+                title: document.getElementById('title').value,
+                subtitle: 'Переводы',
+                bank_preset: document.getElementById('bank_preset').value,
+                datetime: document.getElementById('datetime').value
+            };
+            
+            if (data.amount <= 0) {
+                showResult('Укажите сумму больше 0', 'error');
+                return;
+            }
+            
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Добавление...';
+            
+            try {
+                const response = await fetch(API_BASE + '/api/operations/add', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+                
+                const resultData = await response.json();
+                
+                if (resultData.error) {
+                    throw new Error(resultData.error);
+                }
+                
+                lastOpId = resultData.id;
+                const receiptMsg = resultData.receipt_path ? `, чек: ${resultData.receipt_path}` : '';
+                showResult('✓ Операция добавлена! ID: ' + resultData.id + receiptMsg, 'success');
+                document.getElementById('opForm').reset();
+                document.getElementById('generateReceiptBtn').style.display = 'block';
+                loadOperations();
+            } catch (err) {
+                showResult('✗ Ошибка: ' + err.message, 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Добавить операцию';
+            }
+        });
+        
+        function generateReceipt() {
+            if (!lastOpId) return;
+            fetch(`/api/operations/generate_receipt`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({id: lastOpId})
+            }).then(r => r.json()).then(d => {
+                if (d.error) throw new Error(d.error);
+                showResult('✓ Чек готов: ' + (d.receipt_path || 'сохранён'), 'success');
+            }).catch(err => showResult('Ошибка чека: ' + err.message, 'error'));
+        }
+        
+        function showResult(message, type) {
+            const result = document.getElementById('result');
+            result.textContent = message;
+            result.className = type;
+            result.style.display = 'block';
+            setTimeout(() => { result.style.display = 'none'; }, 5000);
+        }
+        
+        async function loadOperations() {
+            try {
+                const response = await fetch(API_BASE + '/api/operations');
+                const data = await response.json();
+                
+                const list = document.getElementById('operationsList');
+                if (!data.operations || data.operations.length === 0) {
+                    list.innerHTML = '<div style="color: #666; padding: 20px; text-align: center;">Нет операций</div>';
+                    return;
+                }
+                
+                list.innerHTML = data.operations.slice(0, 10).map(op => `
+                    <div class="operation">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <div style="font-weight: 600;">${escapeHtml(op.desc || '—')}</div>
+                                <div style="font-size: 0.8rem; color: #666;">${escapeHtml(op.date || '')}</div>
+                            </div>
+                            <div class="amount ${op.type === 'Credit' ? 'income' : 'expense'}">
+                                ${op.type === 'Credit' ? '+' : '-'} ${op.amount.toLocaleString()} ₽
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (err) {
+                console.error('Ошибка загрузки операций:', err);
+            }
+        }
+        
+        function escapeHtml(text) {
+            if (!text) return '';
+            return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+        
+        // Загрузить операции при старте
+        loadOperations();
+        
+        // Автообновление каждые 5 секунд
+        setInterval(loadOperations, 5000);
+    </script>
+</body>
+</html>
