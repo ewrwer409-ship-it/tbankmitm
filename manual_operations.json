@@ -1,0 +1,38 @@
+{
+  "m_d1e72a4e66b6": {
+    "id": "m_d1e72a4e66b6",
+    "date": "09.04.2026, 12:06:35",
+    "amount": 1000000.0,
+    "type": "Debit",
+    "description": "",
+    "bank": "Сбербанк",
+    "title": "Анатолий К.",
+    "subtitle": "Переводы",
+    "sender_name": "",
+    "requisite_sender_name": "",
+    "phone": "+79281992002",
+    "requisite_phone": "+79281992002",
+    "receipt_phone": "",
+    "card_number": "",
+    "bank_preset": "sber",
+    "pdf_path": "receipt_m_d1e72a4e66_20260409_120635.pdf"
+  },
+  "m_e7c6859a52b5": {
+    "id": "m_e7c6859a52b5",
+    "date": "09.04.2026, 12:07:27",
+    "amount": 20000.0,
+    "type": "Credit",
+    "description": "",
+    "bank": "WB Банк",
+    "title": "ААА",
+    "subtitle": "Переводы",
+    "sender_name": "",
+    "requisite_sender_name": "",
+    "phone": "",
+    "requisite_phone": "",
+    "receipt_phone": "+79122889022",
+    "card_number": "",
+    "bank_preset": "wb",
+    "pdf_path": "receipt_m_e7c6859a52_20260409_120727.pdf"
+  }
+}

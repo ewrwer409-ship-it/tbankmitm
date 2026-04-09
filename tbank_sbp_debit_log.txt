@@ -1,0 +1,5 @@
+=== T-Bank SBP injector ===
+Настройки: tbank_sbp_injector.json (рядом со скриптом)
+Логотипы: bank_merchants_presets.json → bank_preset
+Карта: config.json → balance.new_card_number
+
