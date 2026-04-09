@@ -1,8 +1,11 @@
 @echo off
 cd /d "%~dp0"
 
-rem Panel: http://127.0.0.1:8082/admin (panel_bridge + history on this port)
-set "MITMARGS=-s transfer.py -s controller.py -s balance.py -s history.py -s operation_detail.py -s name.py -s reki.py -s panel_bridge.py -s browser_ops_injector.py -s tbank_sbp_debit_injector.py --listen-host 127.0.0.1 -p 8082 --set block_global=false --set ssl_insecure=true --set http2=false"
+rem start.bat: 127.0.0.1 | start_vps.bat: set TBANKMITM_PROXY_LISTEN_HOST=0.0.0.0 before call
+if not defined TBANKMITM_PROXY_LISTEN_HOST set TBANKMITM_PROXY_LISTEN_HOST=127.0.0.1
+
+rem Single addon chain for local and VPS-style Windows runs (same as start_vps.sh)
+set "MITMARGS=-s transfer.py -s controller.py -s balance.py -s history.py -s operation_detail.py -s name.py -s reki.py -s panel_bridge.py -s browser_ops_injector.py -s tbank_sbp_debit_injector.py --listen-host %TBANKMITM_PROXY_LISTEN_HOST% -p 8082 --set block_global=false --set ssl_insecure=true --set http2=false"
 
 rem mitmproxy 12: "python -m mitmproxy.tools.dump" только импортирует модуль и сразу выходит (нет __main__). Локальный venv + mitm_run_dump.py.
 if not exist "venv\Scripts\python.exe" (

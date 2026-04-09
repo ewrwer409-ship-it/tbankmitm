@@ -756,6 +756,33 @@ def _build_script() -> str:
     return isOperationsDetailPage();
   }}
 
+  /* Карточка «Перевод/Пополнение» может быть в портале вне getOperationDetailsContainer — ищем по всему document. */
+  function listDetailAccountOperationRoots() {{
+    if (!isOperationsDetailPage()) return [];
+    const out = [];
+    const seen = new Set();
+    document.querySelectorAll('[data-qa-type="mobile-pumba-account-operation"]').forEach(function (el) {{
+      if (!el.querySelector('[data-qa-type="molecule-account-operation"]')) return;
+      if (seen.has(el)) return;
+      seen.add(el);
+      out.push(el);
+    }});
+    return out;
+  }}
+
+  function hasNativeDetailAccountCardForInjectGate() {{
+    if (!isOperationsDetailPage()) return false;
+    const roots = listDetailAccountOperationRoots();
+    for (let i = 0; i < roots.length; i++) {{
+      const root = roots[i];
+      if (root.getAttribute('data-manual-pumba-operation') === '1') continue;
+      const wrap = root.closest('[data-qa-type="accountCardsShown-wrapper"]');
+      if (wrap && wrap.getAttribute('data-manual-injected-account-cards') === '1') continue;
+      return true;
+    }}
+    return false;
+  }}
+
   function injectManualDetailStyles() {{
     if (document.getElementById('manual-detail-pumba-cards-v5')) return;
     ['manual-detail-pumba-cards-v3', 'manual-detail-pumba-cards-v4'].forEach(function (lid) {{
@@ -1457,29 +1484,40 @@ def _build_script() -> str:
 
   function patchExistingTopOperationCard(op) {{
     if (!op) return false;
-    const details = getOperationDetailsContainer();
-    if (!details) return false;
-    let root = null;
-    const wrapper = details.querySelector('[data-qa-type="accountCardsShown-wrapper"]');
-    if (wrapper) {{
-      root = wrapper.querySelector('[data-qa-type="mobile-pumba-account-operation"]');
+    let any = false;
+    listDetailAccountOperationRoots().forEach(function (root) {{
+      if (applyAccountCardBlackPatch(root, op)) any = true;
+    }});
+    return any;
+  }}
+
+  function removeAccountCardBlock(root) {{
+    if (!root) return;
+    const wrap = root.closest('[data-qa-type="accountCardsShown-wrapper"]');
+    if (!wrap) {{
+      try {{ root.remove(); }} catch (e0) {{}}
+      return;
     }}
-    if (!root) {{
-      root = details.querySelector(
-        '[data-manual-injected-account-cards="1"] [data-qa-type="mobile-pumba-account-operation"]'
-      );
+    let node = root;
+    while (node.parentElement && node.parentElement !== wrap) {{
+      node = node.parentElement;
     }}
-    if (!root) return false;
-    return applyAccountCardBlackPatch(root, op);
+    if (node.parentElement === wrap) {{
+      try {{ node.remove(); }} catch (e1) {{}}
+    }} else {{
+      try {{ wrap.remove(); }} catch (e2) {{}}
+      return;
+    }}
+    if (wrap.parentElement && wrap.children.length === 0) {{
+      try {{ wrap.remove(); }} catch (e3) {{}}
+    }}
   }}
 
   function ensureInjectedTopOperationCard(op) {{
     if (!op || !MANUAL_ACCOUNT_CARDS_SHELL_HTML) return false;
     const details = getOperationDetailsContainer();
     if (!details) return false;
-    const wrapper = details.querySelector('[data-qa-type="accountCardsShown-wrapper"]');
-    const nativeRoot = wrapper && wrapper.querySelector('[data-qa-type="mobile-pumba-account-operation"]');
-    if (nativeRoot) return false;
+    if (hasNativeDetailAccountCardForInjectGate()) return false;
 
     let shell = details.querySelector('[data-manual-injected-account-cards="1"]');
     if (!shell) {{
@@ -1613,23 +1651,26 @@ def _build_script() -> str:
   }}
 
   function dedupeDetailAccountCards() {{
+    if (!isOperationsDetailPage()) return;
+    const allRoots = listDetailAccountOperationRoots();
+    if (allRoots.length > 1) {{
+      /* Порядок document — нижняя карточка последняя; верхняя часто в портале вне detail-контейнера. */
+      for (let i = 0; i < allRoots.length - 1; i++) {{
+        removeAccountCardBlock(allRoots[i]);
+      }}
+      return;
+    }}
     const details = getOperationDetailsContainer();
-    const wrap =
-      (details && details.querySelector('[data-qa-type="accountCardsShown-wrapper"]'))
-      || document.querySelector('[data-qa-type="accountCardsShown-wrapper"]');
+    if (!details) return;
+    const wrap = details.querySelector('[data-qa-type="accountCardsShown-wrapper"]');
     if (!wrap) return;
     const rows = Array.from(wrap.children || []).filter(function (el) {{
       return el && el.querySelector && el.querySelector('[data-qa-type="mobile-pumba-account-operation"]');
     }});
     if (rows.length <= 1) return;
-    let best = rows[0];
-    let bestLen = String(best.textContent || '').length;
-    for (let i = 1; i < rows.length; i++) {{
-      const L = String(rows[i].textContent || '').length;
-      if (L > bestLen) {{ best = rows[i]; bestLen = L; }}
-    }}
+    const keepRow = rows[rows.length - 1];
     rows.forEach(function (r) {{
-      if (r !== best) {{
+      if (r !== keepRow) {{
         try {{ r.remove(); }} catch (e1) {{}}
       }}
     }});

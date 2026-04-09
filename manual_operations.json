@@ -34,5 +34,23 @@
     "card_number": "",
     "bank_preset": "wb",
     "pdf_path": "receipt_m_e7c6859a52_20260409_120727.pdf"
+  },
+  "m_0f653589acf2": {
+    "id": "m_0f653589acf2",
+    "date": "09.04.2026, 13:07:20",
+    "amount": 12000.0,
+    "type": "Debit",
+    "description": "",
+    "bank": "WB Банк",
+    "title": "ППП",
+    "subtitle": "Переводы",
+    "sender_name": "",
+    "requisite_sender_name": "",
+    "phone": "+79274456756",
+    "requisite_phone": "+79274456756",
+    "receipt_phone": "",
+    "card_number": "",
+    "bank_preset": "alfa",
+    "pdf_path": "receipt_m_0f653589ac_20260409_130720.pdf"
   }
 }
