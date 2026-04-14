@@ -1,0 +1,2 @@
+# Bash on Linux chokes on CRLF (set: pipefail → invalid option).
+*.sh text eol=lf
