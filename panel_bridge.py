@@ -10,7 +10,13 @@ from typing import Optional
 sys.path.append(os.path.dirname(__file__))
 import controller
 import history
-from bank_filter import is_bank_flow, ensure_response_decoded, is_jsonish_response
+from bank_filter import (
+    is_bank_flow,
+    ensure_response_decoded,
+    is_jsonish_response,
+    flow_statements_spravki_context,
+    url_prohibit_proxy_json_mutation,
+)
 
 ALLOWED_IPS = ["85.209.135.247", "5.18.160.29", "85.192.60.79", "127.0.0.1"]
 PANEL_PORT = 8082
@@ -1544,7 +1550,7 @@ HTML_PANEL = """<!DOCTYPE html>
         syncRecipientTypeWithBankPreset('edit');
         updateDirectionSpecificFields('manual');
         updateDirectionSpecificFields('edit');
-        setInterval(loadOperations, 8000);
+        setInterval(loadOperations, 3200);
     </script>
 </body>
 </html>"""
@@ -1732,6 +1738,12 @@ def response(flow: http.HTTPFlow) -> None:
     if not flow.response.text:
         return
     if not is_jsonish_response(flow):
+        return
+
+    if url_prohibit_proxy_json_mutation(url):
+        return
+
+    if flow_statements_spravki_context(flow):
         return
 
     # Подмена гистограмм/сводок расходов-доходов. На mybank URL у Т-Банка периодически меняются,

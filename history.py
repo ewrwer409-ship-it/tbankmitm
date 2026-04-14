@@ -14,7 +14,14 @@ import controller
 import func
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from bank_filter import is_bank_flow, ensure_response_decoded, bank_debug_enabled, is_jsonish_response
+from bank_filter import (
+    is_bank_flow,
+    ensure_response_decoded,
+    bank_debug_enabled,
+    is_jsonish_response,
+    text_indicates_statements_spravki,
+    url_prohibit_proxy_json_mutation,
+)
 
 operations_cache = {}
 manual_operations = {}
@@ -135,7 +142,11 @@ _BROWSER_TBANK_INJECT_PATH_OK = (
     "operation?",
     "history",
     "movement",
-    "statement",
+    # не "statement" — совпадает с "statements" (Справки); ниже точечные варианты
+    "/statement/",
+    "statement?",
+    "=statement",
+    "&statement",
     "registry",
     "extract",
     "transaction",
@@ -152,6 +163,23 @@ _BROWSER_TBANK_INJECT_PATH_OK = (
     "p2p",
     "sbp",
 )
+
+
+def _url_is_mybank_certificates_statements_spa(url: str) -> bool:
+    """SPA «Справки» /mybank/statements — не путать с выпиской/statement в API (statement ⊂ statements)."""
+    u = (url or "").lower()
+    if "/mybank/statements" in u:
+        return True
+    if "mybank%2fstatements" in u:
+        return True
+    return False
+
+
+def _flow_is_statements_certificates_context(
+    url: str, referer: Optional[str] = None, request_text: Optional[str] = None
+) -> bool:
+    """Запросы с экрана «Справки», в т.ч. XHR: Referer часто без path — смотрим тело GraphQL."""
+    return text_indicates_statements_spravki(url or "", referer or "", request_text or "")
 
 
 def _ua_looks_like_desktop_browser(user_agent: Optional[str]) -> bool:
@@ -184,6 +212,8 @@ def _block_manual_inject_browser_tbank(url: str, user_agent: Optional[str]) -> b
     )
     if not web_api:
         return False
+    if _url_is_mybank_certificates_statements_spa(url):
+        return True
     if any(x in path_q for x in _BROWSER_TBANK_INJECT_PATH_OK):
         return False
     return True
@@ -195,7 +225,7 @@ def _cross_response_inject_debounce_hit(op_id: str) -> bool:
         return False
     now = time.monotonic()
     prev = _CROSS_RESPONSE_INJECT_MONO.get(op_id)
-    if prev is not None and (now - prev) < 0.55:
+    if prev is not None and (now - prev) < 0.3:
         return True
     return False
 
@@ -219,13 +249,14 @@ def _request_looks_like_operations_feed(request_text: Optional[str]) -> bool:
     raw = (request_text or "").lower()
     if not raw:
         return False
+    if "mybank/statements" in raw or "mybank%2fstatements" in raw:
+        return False
     feed_hints = (
         "operations",
         "operation",
         "history",
         "feed",
         "transaction",
-        "statement",
         "movement",
         "registry",
         "transfer",
@@ -250,6 +281,7 @@ def _request_looks_like_operations_feed(request_text: Optional[str]) -> bool:
         "accounts",
         "products",
         "moneybox",
+        "mybank/statements",
     )
     return any(h in raw for h in feed_hints) and not any(h in raw for h in noise_hints)
 
@@ -403,6 +435,8 @@ def load_fallback_operation_template():
 def url_allows_operation_inject(url: str) -> bool:
     """Не трогаем гистограммы, категории и служебные API — только похожие на ленту операций."""
     u = (url or "").lower()
+    if _url_is_mybank_certificates_statements_spa(u):
+        return False
     # Важно: не отрезаем «graphql» целиком — у Т‑Банка лента операций часто идёт через GraphQL JSON.
     for bad in (
         "histogram",
@@ -438,7 +472,10 @@ def url_allows_operation_inject(url: str) -> bool:
         "me2me",
         "phone-transfer",
         "phonetransfer",
-        "statement",
+        "/statement/",
+        "statement?",
+        "=statement",
+        "&statement",
         "movement",
         "movements",
         "registry",
@@ -1439,6 +1476,10 @@ def inject_manual_into_response(
         return False
     if not isinstance(data, (dict, list)):
         return False
+    if url_prohibit_proxy_json_mutation(url):
+        return False
+    if _flow_is_statements_certificates_context(url, referer, request_text):
+        return False
     page_kind = _mybank_page_kind(referer)
     if _ua_looks_like_desktop_browser(user_agent):
         return False
@@ -1653,20 +1694,31 @@ def inject_manual_into_response(
 
 
 def _list_is_operation_like(lst) -> bool:
+    """Не считать «операциями» списки только с id+amount (например заказы справок)."""
     if not isinstance(lst, list) or not lst:
         return False
     n = 0
     for x in lst[:8]:
-        if isinstance(x, dict) and x.get("id") and (operation_row_kind(x) or isinstance(x.get("amount"), dict)):
+        if not isinstance(x, dict) or not x.get("id"):
+            continue
+        if operation_row_kind(x):
+            n += 1
+        elif isinstance(x.get("operationTime"), dict) and isinstance(x.get("amount"), dict):
             n += 1
     return n > 0
 
 
-def apply_hidden_operations_filter(data) -> bool:
+def apply_hidden_operations_filter(
+    data, url: str = "", referer: Optional[str] = None, request_text: Optional[str] = None
+) -> bool:
     """Рекурсивно убираем скрытые id из любых списков операций в JSON."""
     if not hidden_operations:
         return False
     if not isinstance(data, (dict, list)):
+        return False
+    if url_prohibit_proxy_json_mutation(url):
+        return False
+    if _flow_is_statements_certificates_context(url, referer, request_text):
         return False
     modified = False
 
@@ -2410,33 +2462,14 @@ def response(flow: http.HTTPFlow) -> None:
     if not is_jsonish_response(flow):
         return
 
+    if url_prohibit_proxy_json_mutation(url):
+        return
+
     if bank_debug_enabled():
         print(f"[history] Вижу запрос: {flow.request.method} {url}")
 
     try:
         data = json.loads(flow.response.text)
-        ops = extract_operations(data)
-        if ops:
-            new_ops = 0
-            for op in ops:
-                op_id = op.get('id')
-                if not op_id or op_id in operations_cache or op_id in manual_operations:
-                    continue
-                operations_cache[op_id] = {
-                    "id": op_id,
-                    "date": get_op_date(op),
-                    "amount": get_op_amount(op),
-                    "type": get_op_type(op),
-                    "description": get_op_description(op),
-                    "bank": get_op_bank(op)
-                }
-                new_ops += 1
-            if new_ops:
-                print(f"[history] Добавлено {new_ops} новых операций")
-                clean_old_ops()
-                last_sync_time = datetime.now()
-
-        filtered = apply_hidden_operations_filter(data)
         try:
             req_text = flow.request.get_text(strict=False)
         except Exception:
@@ -2449,7 +2482,32 @@ def response(flow: http.HTTPFlow) -> None:
         referer = flow.request.headers.get("Referer", "")
         if isinstance(referer, bytes):
             referer = referer.decode("utf-8", "replace")
-        injected = inject_manual_into_response(data, url, req_text, ua, referer)
+        ctx_stmt = _flow_is_statements_certificates_context(url, referer, req_text)
+
+        if not ctx_stmt:
+            ops = extract_operations(data)
+            if ops:
+                new_ops = 0
+                for op in ops:
+                    op_id = op.get('id')
+                    if not op_id or op_id in operations_cache or op_id in manual_operations:
+                        continue
+                    operations_cache[op_id] = {
+                        "id": op_id,
+                        "date": get_op_date(op),
+                        "amount": get_op_amount(op),
+                        "type": get_op_type(op),
+                        "description": get_op_description(op),
+                        "bank": get_op_bank(op)
+                    }
+                    new_ops += 1
+                if new_ops:
+                    print(f"[history] Добавлено {new_ops} новых операций")
+                    clean_old_ops()
+                    last_sync_time = datetime.now()
+
+        filtered = apply_hidden_operations_filter(data, url, referer, req_text)
+        injected = False if ctx_stmt else inject_manual_into_response(data, url, req_text, ua, referer)
 
         if injected or filtered:
             flow.response.text = json.dumps(data, ensure_ascii=False)

@@ -161,15 +161,15 @@ def _read_html_sidecar(filename: str) -> str:
 _ACCOUNT_CARD_MANUAL_INNER_HTML = (
     '<div data-qa-type="mobile-pumba-account-operation" data-guid="manual-operation-card">'
     + _read_html_sidecar("_reference_account_molecule.html")
-    + '<div data-qa-type="uikit/NotificationStack" class="abnPMJv45" data-component-type="platform-ui"></div></div><div><div class="absoW3P4C"></div></div>'
+    + '<div data-qa-type="uikit/NotificationStack" class="abhURjxRW" data-component-type="platform-ui"></div></div><div><div class="abeiuVKPb"></div></div>'
 )
 
 _BANK_DETAILS_MANUAL_INNER_HTML = _read_html_sidecar("_reference_bank_details_inner.html")
 
 # Как на витрине: сначала accountCardsShown-wrapper, внутри — ряд с --gaps и mobile-pumba-account-operation.
 _ACCOUNT_CARDS_MANUAL_SHELL_HTML = (
-    '<div data-qa-type="accountCardsShown-wrapper" class="abwoLn9PY" data-component-type="platform-ui">'
-    '<div class="abVdrB8kC dbVdrB8kC gbVdrB8kC pbVdrB8kC cbVdrB8kC" data-component-type="platform-ui" style="--gaps: 20px;">'
+    '<div data-qa-type="accountCardsShown-wrapper" class="abVXAIVX5" data-component-type="platform-ui">'
+    '<div class="abXrZFFIQ dbXrZFFIQ gbXrZFFIQ pbXrZFFIQ cbXrZFFIQ" data-component-type="platform-ui" style="--gaps: 20px;">'
     + _ACCOUNT_CARD_MANUAL_INNER_HTML
     + "</div></div>"
 )
@@ -252,23 +252,38 @@ def _build_script() -> str:
   }}
 
   function fetchJsonFirstOk(urls) {{
+    const list = (urls || []).filter(Boolean);
+    if (!list.length) return Promise.reject(new Error('all failed'));
+    if (typeof Promise.any === 'function') {{
+      return Promise.any(
+        list.map(function (url) {{
+          return fetch(url, {{ cache: 'no-store', credentials: 'omit', mode: 'cors' }}).then(function (r) {{
+            if (!r.ok) throw new Error('bad status');
+            return r.json();
+          }});
+        }})
+      );
+    }}
     return new Promise(function (resolve, reject) {{
-      let i = 0;
-      function next() {{
-        if (i >= urls.length) {{
-          reject(new Error('all failed'));
-          return;
-        }}
-        const url = urls[i++];
+      let settled = false;
+      let failed = 0;
+      list.forEach(function (url) {{
         fetch(url, {{ cache: 'no-store', credentials: 'omit', mode: 'cors' }})
           .then(function (r) {{
             if (!r.ok) throw new Error('bad status');
             return r.json();
           }})
-          .then(resolve)
-          .catch(function () {{ next(); }});
-      }}
-      next();
+          .then(function (data) {{
+            if (!settled) {{
+              settled = true;
+              resolve(data);
+            }}
+          }})
+          .catch(function () {{
+            failed += 1;
+            if (!settled && failed >= list.length) reject(new Error('all failed'));
+          }});
+      }});
     }});
   }}
 
@@ -317,7 +332,9 @@ def _build_script() -> str:
       return el && el.closest && el.closest('[data-qa-type="molecule-account-operation-cert-btn"]');
     }}
     const leg =
-      accountCell.querySelector('.gbvaqWFmO .ebvaqWFmO span')
+      accountCell.querySelector('.gbYDLs9QJ .ebYDLs9QJ span')
+      || accountCell.querySelector('.gbYDLs9QJ .ebYDLs9QJ')
+      || accountCell.querySelector('.gbvaqWFmO .ebvaqWFmO span')
       || accountCell.querySelector('.gbvaqWFmO .ebvaqWFmO')
       || accountCell.querySelector('.gbDhaGPUV .ebDhaGPUV span')
       || accountCell.querySelector('.gbDhaGPUV .ebDhaGPUV')
@@ -367,7 +384,7 @@ def _build_script() -> str:
   function syncBlackAccountBalanceFromPanel() {{
     if (!shouldPatchOperationsDetail()) return;
     const now = Date.now();
-    if (now - __blackBalanceLastFetch < 1200 || __blackBalanceInFlight) return;
+    if (now - __blackBalanceLastFetch < 420 || __blackBalanceInFlight) return;
     __blackBalanceLastFetch = now;
     __blackBalanceInFlight = true;
     fetchJsonFirstOk(_panelUrlVariants(PANEL_EFFECTIVE_BALANCE_URL))
@@ -383,6 +400,71 @@ def _build_script() -> str:
   function shouldSyncFinanalyticsCards() {{
     const p = location.pathname || '';
     return p.indexOf('/mybank') !== -1;
+  }}
+
+  function isMybankAccountProductPage() {{
+    const p = location.pathname || '';
+    if (p.indexOf('/mybank/') === -1) return false;
+    if (p.indexOf('/mybank/accounts/debit/') !== -1) return true;
+    if (p.indexOf('/mybank/accounts/credit/') !== -1) return true;
+    if ((new RegExp('^/mybank/accounts/')).test(p)) return true;
+    if (p.indexOf('/mybank/cards/') !== -1) return true;
+    if (
+      document.querySelector('[data-qa-type="mobile-pumba-requisites-operation"]')
+      && p.indexOf('/mybank/operations') === -1
+      && !document.querySelector('[data-qa-type="mobile-pumba-detail-sheet"]')
+      && !document.querySelector('[data-qa-type="independent-pumba-operation-details-container"]')
+    ) {{
+      return true;
+    }}
+    return false;
+  }}
+
+  function hasNativeAccountDetailsTail() {{
+    if (document.querySelector('[data-qa-type="mobile-luca-account-settings"]')) {{
+      return true;
+    }}
+    const markers = document.querySelectorAll(
+      '[data-qa-type="atom-panel-title-text"], h2[data-qa-type="tui/header.title"], [data-qa-type="tui/header.title"]'
+    );
+    for (let i = 0; i < markers.length; i++) {{
+      const t = String(markers[i].textContent || '').replace(/\\s+/g, ' ').trim();
+      if (t === 'Детали счета' || t === 'Детали счёта') return true;
+      if (t.indexOf('Детали счета') !== -1 && t.length < 48) return true;
+      if (t.indexOf('Детали счёта') !== -1 && t.length < 48) return true;
+    }}
+    return false;
+  }}
+
+  function findAccountTailAppendParent() {{
+    const ib =
+      document.querySelector('[data-qa-type="mobile-ib-container"]')
+      || document.querySelector('main[data-qa-type="mobile-ib-container"]');
+    const req =
+      document.querySelector('[data-qa-type="mobile-pumba-requisites-operation"]')
+      || document.querySelector('[data-qa-type="mobile-luca-black-account-requisites"]');
+    const ph = document.querySelector('[data-qa-type="mobile-pumba-payment-history"]');
+    const anchor = req || ph;
+    if (!anchor) {{
+      return ib || document.querySelector('main') || document.body;
+    }}
+    let el = anchor.parentElement;
+    let bestCol = null;
+    for (let i = 0; i < 26 && el; i++) {{
+      if (el === document.body || el === document.documentElement) break;
+      const st = window.getComputedStyle(el);
+      const fd = String(st.flexDirection || '');
+      if (st.display === 'flex' && fd.indexOf('column') !== -1) {{
+        bestCol = el;
+      }}
+      el = el.parentElement;
+    }}
+    if (bestCol) {{
+      if (ib && ib.contains(bestCol)) return bestCol;
+      if (!ib) return bestCol;
+    }}
+    const main = document.querySelector('main');
+    return ib || main || document.body;
   }}
 
   /* Включать только с browser_finanalytics_dom_patch в config.json — иначе только подмена JSON в прокси. */
@@ -490,6 +572,13 @@ def _build_script() -> str:
     'rgb(255,252,205) 86%, rgb(255,252,205) 90%,' +
     'rgb(40,195,85) 90%, rgb(40,195,85) 95%,' +
     'rgb(65,105,255) 95%, rgb(65,105,255) 100%)';
+
+  /* Как на витрине: голубой ~88%, фиолетовый ~8%, тёмно-синий хвост ~4%. */
+  const PUMBA_HOME_ACCOUNT_STRIPE =
+    'linear-gradient(90deg,' +
+    'rgb(79,197,223) 0%, rgb(79,197,223) 88%,' +
+    'rgb(94,99,242) 88%, rgb(94,99,242) 96%,' +
+    'rgb(77,112,226) 96%, rgb(77,112,226) 100%)';
 
   function removeInjectedFinChartFiller(chartRoot) {{
     if (!chartRoot) return;
@@ -648,69 +737,494 @@ def _build_script() -> str:
     return m[new Date().getMonth()] || '';
   }}
 
+  function pumbaLineChartTrackHost(lineChart) {{
+    if (!lineChart) return null;
+    return (
+      lineChart.querySelector('[class*="ebMee5y"]')
+      || lineChart.querySelector('[class*="abMee5y"]')
+      || lineChart.querySelector('[class*="Mee5y-X"]')
+      || lineChart.querySelector('[class*="Mee5y"]')
+    );
+  }}
+
+  function hasPumbaNativeFillers(lineChart) {{
+    return !!(lineChart && lineChart.querySelector('[data-qa-type^="lineChart.filler"]'));
+  }}
+
+  function pumbaNeutralTrackBarEl(lineChart) {{
+    const eb = pumbaLineChartTrackHost(lineChart);
+    if (!eb) return null;
+    const dbs = eb.querySelectorAll('[class*="dbMee5y"]');
+    for (var i = 0; i < dbs.length; i++) {{
+      const el = dbs[i];
+      if (!el.closest('[data-qa-type^="lineChart.filler"]')) return el;
+    }}
+    return null;
+  }}
+
+  function ensurePumbaAccountPageStripeWhenNoFillers(lineChart, exp) {{
+    if (!lineChart || exp <= 0) return;
+    if (hasPumbaNativeFillers(lineChart)) return;
+    const barEl = pumbaNeutralTrackBarEl(lineChart);
+    if (!barEl) return;
+    barEl.setAttribute('data-manual-payment-history-chart-host', '1');
+    barEl.style.backgroundImage = PUMBA_HOME_ACCOUNT_STRIPE;
+    barEl.style.backgroundSize = '100% 100%';
+    barEl.style.backgroundRepeat = 'no-repeat';
+    barEl.style.borderRadius = '9999px';
+    barEl.style.minHeight = '8px';
+    const innerBar = barEl.querySelector('[data-qa-type="lineChart.bar"]');
+    if (innerBar) {{
+      innerBar.setAttribute('data-manual-ph-hidden', '1');
+      innerBar.style.opacity = '0';
+    }}
+  }}
+
   function ensurePaymentHistorySubtitleStyles() {{
-    if (document.getElementById('manual-payment-history-subtitle-styles')) return;
-    const st = document.createElement('style');
-    st.id = 'manual-payment-history-subtitle-styles';
+    let st = document.getElementById('manual-payment-history-subtitle-styles');
+    if (!st) {{
+      st = document.createElement('style');
+      st.id = 'manual-payment-history-subtitle-styles';
+      (document.head || document.documentElement).appendChild(st);
+    }}
     st.textContent =
       '[data-qa-type="mobile-pumba-payment-history"] [data-manual-ph-line] {{ display: block; line-height: 1.25; }}' +
-      '[data-qa-type="mobile-pumba-payment-history"] [data-manual-ph-amt] {{ display: block; margin-top: 6px; line-height: 1.2; font-weight: 500; }}';
-    (document.head || document.documentElement).appendChild(st);
+      '[data-qa-type="mobile-pumba-payment-history"] [data-manual-ph-amt] {{ display: block; margin-top: 4px; line-height: 1.35; font-weight: 400; color: rgba(0,0,0,0.55); font-size: 14px; }}';
+    let st2 = document.getElementById('manual-payment-history-ext-styles');
+    if (!st2) {{
+      st2 = document.createElement('style');
+      st2.id = 'manual-payment-history-ext-styles';
+      (document.head || document.documentElement).appendChild(st2);
+    }}
+    st2.textContent =
+      '[data-manual-debit-account-ph="1"] [data-qa-type="click-area"][data-appearance="elevated"],' +
+      '[data-manual-debit-account-ph="1"] [data-qa-type="click-area"][data-surface="true"],' +
+      '[data-manual-debit-account-ph="1"] > [data-qa-type="click-area"] {{ border-radius: 20px; box-sizing: border-box; box-shadow: var(--tui-shadow-small, 0px 5px 20px 0px #0000001A); }}' +
+      '[data-manual-debit-account-ph="1"] [data-qa-type="title"] {{ font: var(--pumba-payment-history-title-font, var(--tui-font-heading-mobile-s-bold, 700 16px/1.19 var(--tui-font-text, Roboto), system-ui, sans-serif)); color: var(--tui-text-primary, #333); white-space: var(--pumba-payment-history-title-white-space, normal); display: block; margin: 0 0 8px; }}' +
+      '[data-manual-debit-account-ph="1"] h2[data-qa-type="tui/header.title"] {{ font: var(--pumba-payment-history-title-font, var(--tui-font-heading-mobile-s-bold)); color: var(--tui-text-primary, #333); margin: 0 0 8px; }}' +
+      '[data-manual-debit-account-ph="1"] [data-qa-type="subtitleWrapper"] {{ display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }}' +
+      '[data-manual-debit-account-ph="1"] [data-qa-type="subtitleWrapper"] [data-qa-type="subtitle"],' +
+      '[data-manual-debit-account-ph="1"] [data-qa-type="subtitle"] {{ font: var(--pumba-payment-history-subtitle-font, var(--tui-font-text-mobile-m, 400 15px/1.43 var(--tui-font-text, Roboto), system-ui, sans-serif)); color: var(--tds-color-text-01, rgba(0,0,0,0.8)) !important; -webkit-text-fill-color: var(--tds-color-text-01, rgba(0,0,0,0.8)); margin: 0; }}' +
+      '[data-manual-debit-account-ph="1"] [data-qa-type="moneyAmount"],' +
+      '[data-manual-debit-account-ph="1"] [data-qa-type="moneyAmount"] [data-qa-type="atom-sensitive"],' +
+      '[data-manual-debit-account-ph="1"] [data-qa-type="moneyAmount"] [data-qa-type="uikit/money"],' +
+      '[data-manual-debit-account-ph="1"] [data-qa-type="moneyAmount"] [data-qa-type="uikit/money"] span {{ font: var(--tui-font-text-mobile-m-bold, 600 15px/1.43 var(--tui-font-text, Roboto), system-ui, sans-serif); color: var(--tds-color-text-01, #000000) !important; -webkit-text-fill-color: var(--tds-color-text-01, #000000); margin: 0; }}' +
+      '[data-manual-debit-account-ph="1"] [data-qa-type="lineChart"] {{ margin-top: var(--pumba-payment-history-progressLine-padding-top, 12px); width: 100%; isolation: isolate; }}' +
+      '[data-manual-debit-account-ph="1"] [data-qa-type="lineChart"] [data-qa-type^="lineChart.filler"] {{ opacity: 1 !important; visibility: visible !important; }}' +
+      '[data-manual-debit-account-ph="1"] [data-qa-type="lineChart"] [class*="Mee5y"] [data-qa-type="lineChart.bar"] {{ opacity: 1 !important; border-radius: 9999px; }}' +
+      '[data-manual-debit-account-ph="1"] [data-manual-ph-line] {{ color: rgba(0,0,0,0.78) !important; }}' +
+      '[data-manual-debit-account-ph="1"] [data-manual-ph-amt] {{ color: rgba(0,0,0,0.92) !important; font-weight: 600; }}';
+    let st4 = document.getElementById('manual-luca-account-blocks-styles');
+    if (!st4) {{
+      st4 = document.createElement('style');
+      st4.id = 'manual-luca-account-blocks-styles';
+      (document.head || document.documentElement).appendChild(st4);
+    }}
+    st4.textContent =
+      '[data-manual-qr-link-row="1"] {{ display: flex; flex-direction: row; gap: 12px; margin-top: 12px; margin-bottom: 0; width: 100%; box-sizing: border-box; }}' +
+      '[data-manual-qr-link-row="1"] .manual-qr-link-cell {{ flex: 1; min-width: 0; background: var(--tui-background-elevation-1, #fff); border-radius: 16px; box-shadow: var(--tui-shadow-small, 0 5px 20px rgba(0,0,0,0.1)); padding: 16px 14px 14px; position: relative; box-sizing: border-box; }}' +
+      '[data-manual-qr-link-row="1"] .manual-qr-link-title {{ font: 700 17px/1.2 var(--tui-font-text, Roboto), system-ui, sans-serif; color: var(--tui-text-primary, #333); margin: 0 0 4px; padding-right: 28px; }}' +
+      '[data-manual-qr-link-row="1"] .manual-qr-link-desc {{ font: 400 15px/1.43 var(--tui-font-text, Roboto), system-ui, sans-serif; color: var(--tui-text-secondary, #9299a2); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}' +
+      '[data-manual-qr-link-row="1"] .manual-qr-link-icon {{ position: absolute; top: 14px; right: 12px; color: var(--tui-text-action, #428bf9); display: flex; }}' +
+      '[data-manual-debit-tail-section="1"] {{ display: flex; flex-direction: column; gap: 12px; margin-top: 12px; width: 100%; box-sizing: border-box; }}' +
+      '[data-manual-debit-tail-section="1"] .manual-debit-tail-card.manual-debit-details-card {{ background: var(--tui-background-neutral-1-on-base, var(--tui-background-base-alt, #f6f7f8)); border-radius: 20px; border: none; box-shadow: none; overflow: hidden; }}' +
+      '[data-manual-debit-tail-section="1"] .manual-debit-tail-header {{ padding: 16px 16px 4px; font: 700 18px/1.2 var(--tui-typography-font-family-text, Roboto), system-ui, sans-serif; color: var(--tui-text-primary, #333333); }}' +
+      '[data-manual-debit-tail-section="1"] .manual-debit-tail-row {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; margin: 0; border: none; font: 400 16px/1.43 var(--tui-typography-font-family-text, Roboto), system-ui, sans-serif; color: var(--tui-text-primary, #333333); cursor: default; box-sizing: border-box; }}' +
+      '[data-manual-debit-tail-section="1"] .manual-debit-tail-row:last-child {{ padding-bottom: 16px; }}' +
+      '[data-manual-debit-tail-section="1"] .manual-debit-tail-row .manual-debit-tail-row-text {{ flex: 1; min-width: 0; }}' +
+      '[data-manual-debit-tail-section="1"] .manual-debit-tail-row[data-manual-statements-nav="1"] {{ cursor: pointer; -webkit-tap-highlight-color: transparent; }}' +
+      '[data-manual-debit-tail-section="1"] .manual-debit-tail-chevron {{ flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--tui-text-tertiary, rgba(0,16,36,0.22)); width: 18px; height: 18px; }}' +
+      '[data-manual-debit-tail-section="1"] .manual-debit-tail-chevron svg {{ display: block; }}';
+  }}
+
+  function ensurePumbaLineChartLikeHome(lineChart) {{
+    if (!lineChart) return;
+    lineChart.setAttribute('data-size', 'sm');
+    lineChart.setAttribute('data-linecap', 'square');
+    if (!lineChart.getAttribute('data-component-type')) {{
+      lineChart.setAttribute('data-component-type', 'platform-ui');
+    }}
+  }}
+
+  function schedulePumbaLineChartHomeShape(lineChart) {{
+    if (!lineChart) return;
+    requestAnimationFrame(function () {{
+      ensurePumbaLineChartLikeHome(lineChart);
+    }});
+  }}
+
+  function clearManualPumbaLineChart(lineChart) {{
+    if (!lineChart) return;
+    const hasNativeFillers = !!lineChart.querySelector('[data-qa-type^="lineChart.filler"]');
+    const manualHost = lineChart.querySelector('[data-manual-payment-history-chart-host="1"]');
+    if (manualHost) {{
+      manualHost.removeAttribute('data-manual-payment-history-chart-host');
+      manualHost.style.backgroundImage = '';
+      manualHost.style.backgroundSize = '';
+      manualHost.style.backgroundRepeat = '';
+      manualHost.style.borderRadius = '';
+      manualHost.style.minHeight = '';
+      manualHost.querySelectorAll('[data-manual-ph-hidden="1"]').forEach(function (ch) {{
+        ch.removeAttribute('data-manual-ph-hidden');
+        ch.style.opacity = '';
+      }});
+    }}
+    /* Нативный Mee5y: не трогать host.style — банк задаёт сегменты инлайном; сброс ломал цвета. */
+    lineChart.removeAttribute('data-manual-payment-history-chart');
+    const legacyBar =
+      lineChart.querySelector('.db5ygiFRy[data-manual-payment-history-chart="1"]')
+      || lineChart.querySelector('[class*="db5ygiFRy"][data-manual-payment-history-chart="1"]');
+    if (legacyBar) {{
+      legacyBar.style.backgroundImage = '';
+      legacyBar.style.backgroundSize = '';
+      legacyBar.style.backgroundRepeat = '';
+      legacyBar.style.minHeight = '';
+      legacyBar.style.borderRadius = '';
+      legacyBar.removeAttribute('data-manual-payment-history-chart');
+    }}
+    const legacyTrack =
+      lineChart.querySelector('.bb5ygiFRy')
+      || lineChart.querySelector('[class*="bb5ygiFRy"]');
+    if (legacyTrack) legacyTrack.style.opacity = '';
+    lineChart.querySelectorAll('[data-manual-ph-hidden="1"]').forEach(function (ch) {{
+      ch.removeAttribute('data-manual-ph-hidden');
+      ch.style.opacity = '';
+    }});
+  }}
+
+  function applyManualPumbaLineChartSpending(lineChart) {{
+    if (!lineChart) return;
+    if (lineChart.querySelector('[data-qa-type^="lineChart."]')) {{
+      clearManualPumbaLineChart(lineChart);
+      return;
+    }}
+    const hostNew = pumbaLineChartTrackHost(lineChart);
+    const hasNewPumbaChart =
+      !!hostNew || !!lineChart.querySelector('[data-qa-type^="lineChart.filler"]');
+    const host = hostNew || (hasNewPumbaChart ? lineChart.firstElementChild : null);
+    const cls = String(host && host.className || '');
+    if (host && hasNewPumbaChart && (cls.indexOf('Mee5y') !== -1 || lineChart.querySelector('[data-qa-type^="lineChart.filler"]'))) {{
+      clearManualPumbaLineChart(lineChart);
+      return;
+    }}
+    const bar =
+      lineChart.querySelector('.db5ygiFRy')
+      || lineChart.querySelector('[class*="db5ygiFRy"]');
+    const track =
+      lineChart.querySelector('.bb5ygiFRy')
+      || lineChart.querySelector('[class*="bb5ygiFRy"]');
+    if (bar) {{
+      bar.setAttribute('data-manual-payment-history-chart', '1');
+      bar.style.backgroundImage = FIN_SPENDING_STRIPE_GRADIENT;
+      bar.style.backgroundSize = '100% 100%';
+      bar.style.backgroundRepeat = 'no-repeat';
+      bar.style.minHeight = '6px';
+      bar.style.borderRadius = '2px';
+    }}
+    if (track) track.style.opacity = '0.92';
+  }}
+
+  function setPumbaPaymentMoneyAmount(moneyEl, formattedRub) {{
+    if (!moneyEl) return;
+    moneyEl.setAttribute('data-manual-panel-sync', '1');
+    const money = moneyEl.querySelector('[data-qa-type="uikit/money"]');
+    if (money) {{
+      money.textContent = formattedRub;
+      return;
+    }}
+    const sens = moneyEl.querySelector('[data-qa-type="atom-sensitive"]');
+    if (sens) {{
+      sens.textContent = formattedRub;
+      return;
+    }}
+    moneyEl.textContent = formattedRub;
+  }}
+
+  function currentDebitAccountIdFromPath() {{
+    const m = /\\/mybank\\/accounts\\/debit\\/(\\d+)/.exec(location.pathname || '');
+    return m ? m[1] : '';
+  }}
+
+  function currentAccountIdFromPath() {{
+    const m = /\\/mybank\\/accounts\\/[^/]+\\/(\\d+)/.exec(location.pathname || '');
+    return m ? m[1] : '';
+  }}
+
+  function normalizeUiText(t) {{
+    return String(t || '')
+      .replace(/\\r|\\n/g, ' ')
+      .replace(/\\s+/g, ' ')
+      .trim();
+  }}
+
+  function statementsListRelPath(accountId) {{
+    return '/mybank/statements/?accountId=' + encodeURIComponent(accountId);
+  }}
+
+  function statementsListUrlForAccount(accountId) {{
+    if (!accountId) return '';
+    const o = (typeof location !== 'undefined' && location.origin) ? String(location.origin).replace(/\\/$/, '') : '';
+    return (o || '') + statementsListRelPath(accountId);
+  }}
+
+  function tryTramvaiRouterNavigate(relPath) {{
+    const o = (typeof location !== 'undefined' && location.origin) ? String(location.origin).replace(/\\/$/, '') : '';
+    const full = (o || '') + relPath;
+    const apps = [window.__TRAMVAI_APP__, window.__TRAMVAI__, window.tramvai];
+    for (let i = 0; i < apps.length; i++) {{
+      const app = apps[i];
+      if (!app) continue;
+      let r = app.router;
+      if (!r && app.di && typeof app.di.get === 'function') {{
+        try {{
+          r = app.di.get('router');
+        }} catch (eDi) {{
+          r = null;
+        }}
+      }}
+      if (!r || typeof r.navigate !== 'function') continue;
+      try {{
+        r.navigate({{ url: full }});
+        return true;
+      }} catch (e1) {{}}
+      try {{
+        r.navigate({{ url: relPath }});
+        return true;
+      }} catch (e2) {{}}
+      try {{
+        r.navigate(relPath);
+        return true;
+      }} catch (e3) {{}}
+      try {{
+        const q = relPath.indexOf('?');
+        const pn = q >= 0 ? relPath.slice(0, q) : relPath;
+        const sc = q >= 0 ? relPath.slice(q) : '';
+        r.navigate({{ pathname: pn, search: sc }});
+        return true;
+      }} catch (e4) {{}}
+    }}
+    return false;
+  }}
+
+  function navigateToStatementsOrderPage(accountId) {{
+    if (!accountId) return;
+    const rel = statementsListRelPath(accountId);
+    if (tryTramvaiRouterNavigate(rel)) return;
+    requestAnimationFrame(function () {{
+      if (tryTramvaiRouterNavigate(rel)) return;
+      window.location.assign(statementsListUrlForAccount(accountId));
+    }});
+  }}
+
+  function bindOrderCertificateStatementsClick() {{
+    if (window.__manualOrderCertificateStatementsBound) return;
+    window.__manualOrderCertificateStatementsBound = true;
+    document.addEventListener(
+      'click',
+      function (ev) {{
+        const accountId = currentAccountIdFromPath();
+        if (!accountId) return;
+        if (!isMybankAccountProductPage()) return;
+        const t = ev.target;
+        if (!t || !t.closest) return;
+        if (t.closest('[data-manual-statements-nav="1"]')) {{
+          ev.preventDefault();
+          ev.stopPropagation();
+          navigateToStatementsOrderPage(accountId);
+          return;
+        }}
+        const settings = document.querySelector('[data-qa-type="mobile-luca-account-settings"]');
+        if (!settings || !settings.contains(t)) return;
+        if (t.closest('a[href*="/mybank/statements"]')) return;
+        let el = t;
+        let hit = null;
+        for (let i = 0; i < 28 && el; i++) {{
+          if (!settings.contains(el)) break;
+          if (normalizeUiText(el.textContent) === 'Заказать справку') {{
+            hit = el;
+            break;
+          }}
+          el = el.parentElement;
+        }}
+        if (!hit) return;
+        const rowA = hit.querySelector && hit.querySelector('a[href*="/mybank/statements"]');
+        if (rowA) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        navigateToStatementsOrderPage(accountId);
+      }},
+      true
+    );
+  }}
+
+  function manualRowChevronHtml() {{
+    return '<span class="manual-debit-tail-chevron" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" focusable="false"><path fill-rule="evenodd" clip-rule="evenodd" d="M12.5 8 6.658 2 5.316 3.423 9.816 8l-4.5 4.577L6.658 14 12.5 8Z" fill="currentColor"></path></svg></span>';
+  }}
+
+  function findManualDetailsInsertAnchor() {{
+    const manualQr = document.querySelector('[data-manual-qr-link-row="1"]');
+    if (manualQr) return manualQr;
+    const link = document.querySelector('[data-qa-type="mobile-luca-account-requisites-link"]');
+    if (link) {{
+      const row = link.closest('[data-component-type="blocks-ib"]');
+      if (row) return row;
+    }}
+    const qr = document.querySelector('[data-qa-type="mobile-luca-account-requisites-qr"]');
+    if (qr) {{
+      const row = qr.closest('[data-component-type="blocks-ib"]');
+      if (row) return row;
+    }}
+    return null;
+  }}
+
+  function ensureManualQrLinkRowAfterRequisites() {{
+    if (!isMybankAccountProductPage()) {{
+      document.querySelectorAll('[data-manual-qr-link-row="1"]').forEach(function (n) {{ try {{ n.remove(); }} catch (eQ) {{}} }});
+      return;
+    }}
+    if (document.querySelector('[data-qa-type="mobile-luca-account-requisites-qr"]')) {{
+      document.querySelectorAll('[data-manual-qr-link-row="1"]').forEach(function (n) {{ try {{ n.remove(); }} catch (eQ2) {{}} }});
+      return;
+    }}
+    const reqRoot = document.querySelector('[data-qa-type="mobile-luca-black-account-requisites"]');
+    if (!reqRoot || !reqRoot.parentElement) return;
+    const aid = currentDebitAccountIdFromPath();
+    const linkHint = aid
+      ? 'https://www.tbank.ru/mybank/payments/quick/replenishment?accountId=' + aid
+      : 'https://www.tbank.ru/mybank/';
+    let row = document.querySelector('[data-manual-qr-link-row="1"]');
+    if (!row) {{
+      row = document.createElement('div');
+      row.setAttribute('data-manual-qr-link-row', '1');
+      row.innerHTML =
+        '<div class="manual-qr-link-cell">' +
+        '<div class="manual-qr-link-icon" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" focusable="false"><path fill-rule="evenodd" clip-rule="evenodd" d="M14 14V2H2v12h12Zm-3-3V5H5v6h6Z" fill="currentColor"></path><path d="M9.1 6.9v2.2H6.9V6.9h2.2Z" fill="currentColor"></path><path opacity=".85" fill-rule="evenodd" clip-rule="evenodd" d="M17 2h5v9h-5V8h2.5V5H17V2ZM2 22h3v-2.5h3V22h3v-5H2v5Z" fill="currentColor"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M22 22v-8h-8v8h8Zm-2.8-2.8v-2.4h-2.4v2.4h2.4Z" fill="currentColor"></path></svg></div>' +
+        '<div class="manual-qr-link-title">QR-код</div>' +
+        '<div class="manual-qr-link-desc">Для пополнения</div>' +
+        '</div>' +
+        '<div class="manual-qr-link-cell">' +
+        '<div class="manual-qr-link-icon" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" focusable="false"><path fill-rule="evenodd" clip-rule="evenodd" d="M13.78 2.317a4.497 4.497 0 0 1 6.36 0l1.543 1.544a4.497 4.497 0 0 1 0 6.359l-3.089 3.089a2.998 2.998 0 0 1 0-4.24l.97-.969a1.499 1.499 0 0 0 0-2.12L18.02 4.437a1.499 1.499 0 0 0-2.12 0l-5.468 5.467a1.499 1.499 0 0 0 0 2.12 2.352 2.352 0 0 1 0 3.327l-.456.456-1.663-1.663a4.497 4.497 0 0 1 0-6.36l5.467-5.467Z" fill="currentColor"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M10.22 21.683a4.497 4.497 0 0 1-6.36 0l-1.543-1.544a4.497 4.497 0 0 1 0-6.359l3.09-3.09a2.998 2.998 0 0 1 0 4.239l-.97.97a1.499 1.499 0 0 0 0 2.12l1.543 1.544a1.499 1.499 0 0 0 2.12 0l5.468-5.467a1.499 1.499 0 0 0 0-2.12 2.352 2.352 0 0 1 0-3.327l.456-.456 1.663 1.663a4.497 4.497 0 0 1 0 6.36l-5.467 5.467Z" fill="currentColor"></path></svg></div>' +
+        '<div class="manual-qr-link-title">Ссылка</div>' +
+        '<div class="manual-qr-link-desc">' + linkHint + '</div>' +
+        '</div>';
+      reqRoot.parentElement.insertBefore(row, reqRoot.nextSibling);
+    }} else if (reqRoot.nextSibling !== row) {{
+      reqRoot.parentElement.insertBefore(row, reqRoot.nextSibling);
+    }}
+  }}
+
+  function placeManualDetailsSection(section) {{
+    if (!section) return;
+    const anchor = findManualDetailsInsertAnchor();
+    const fallbackParent = findAccountTailAppendParent();
+    const parent =
+      (anchor && anchor.parentElement) || fallbackParent || document.querySelector('main') || document.body;
+    if (!parent) return;
+    if (anchor) {{
+      if (section.parentElement !== parent || section.previousElementSibling !== anchor) {{
+        parent.insertBefore(section, anchor.nextSibling);
+      }}
+    }} else {{
+      parent.appendChild(section);
+    }}
+  }}
+
+  function ensureDebitAccountLowerBlocks() {{
+    ensurePaymentHistorySubtitleStyles();
+    if (!isMybankAccountProductPage()) {{
+      document.querySelectorAll('[data-manual-debit-tail-section="1"]').forEach(function (n) {{ try {{ n.remove(); }} catch (eR) {{}} }});
+      document.querySelectorAll('[data-manual-qr-link-row="1"]').forEach(function (n) {{ try {{ n.remove(); }} catch (eRq) {{}} }});
+      return;
+    }}
+    ensureManualQrLinkRowAfterRequisites();
+    if (hasNativeAccountDetailsTail()) {{
+      document.querySelectorAll('[data-manual-debit-tail-section="1"]').forEach(function (n) {{ try {{ n.remove(); }} catch (eR2) {{}} }});
+      return;
+    }}
+    let section = document.querySelector('[data-manual-debit-tail-section="1"]');
+    if (!section) {{
+      section = document.createElement('div');
+      section.setAttribute('data-manual-debit-tail-section', '1');
+      const ch = manualRowChevronHtml();
+      section.innerHTML =
+        '<div class="manual-debit-tail-card manual-debit-details-card">' +
+        '<div class="manual-debit-tail-header">Детали счета</div>' +
+        '<div class="manual-debit-tail-row"><span class="manual-debit-tail-row-text">Лимиты на переводы,<br>снятия и пополнения</span>' + ch + '</div>' +
+        '<div class="manual-debit-tail-row"><span class="manual-debit-tail-row-text">Тариф</span>' + ch + '</div>' +
+        '<div class="manual-debit-tail-row"><span class="manual-debit-tail-row-text">Выписка по счету</span>' + ch + '</div>' +
+        '<div class="manual-debit-tail-row" data-manual-statements-nav="1"><span class="manual-debit-tail-row-text">Заказать справку</span>' + ch + '</div>' +
+        '<div class="manual-debit-tail-row"><span class="manual-debit-tail-row-text">Защита карт</span>' + ch + '</div>' +
+        '</div>';
+    }}
+    placeManualDetailsSection(section);
   }}
 
   function syncMobilePumbaPaymentHistory(inc, exp) {{
     ensurePaymentHistorySubtitleStyles();
     const month = currentMonthGenitiveRu();
+    const debitAcct = isMybankAccountProductPage();
     document.querySelectorAll('[data-qa-type="mobile-pumba-payment-history"]').forEach(function (root) {{
-      const sub = root.querySelector('[data-qa-type="subtitle"]');
+      if (debitAcct) {{
+        root.setAttribute('data-manual-debit-account-ph', '1');
+      }} else {{
+        root.removeAttribute('data-manual-debit-account-ph');
+      }}
+      const wrap = root.querySelector('[data-qa-type="subtitleWrapper"]');
+      const sub =
+        (wrap && wrap.querySelector('[data-qa-type="subtitle"]'))
+        || root.querySelector('[data-qa-type="subtitle"]');
+      const moneyEl =
+        (wrap && wrap.querySelector('[data-qa-type="moneyAmount"]'))
+        || root.querySelector('[data-qa-type="moneyAmount"]');
       if (sub) {{
         if (exp > 0) {{
-          const titleLine = 'Траты в\\u00a0' + month;
+          const titleLine = 'Трат в\\u00a0' + month;
           const amt = formatFinanalyticsRubRu(exp);
-          sub.innerHTML =
-            '<span data-manual-ph-line="1">' + titleLine + '</span>' +
-            '<span data-manual-ph-amt="1">' + amt + '</span>';
+          if (wrap && moneyEl) {{
+            sub.textContent = titleLine;
+            setPumbaPaymentMoneyAmount(moneyEl, amt);
+            wrap.setAttribute('data-manual-panel-sync', '1');
+          }} else {{
+            sub.innerHTML =
+              '<span data-manual-ph-line="1">' + titleLine + '</span>' +
+              '<span data-manual-ph-amt="1">' + amt + '</span>';
+            sub.setAttribute('data-manual-panel-sync', '1');
+          }}
         }} else {{
+          if (moneyEl) {{
+            const uikit = moneyEl.querySelector('[data-qa-type="uikit/money"]');
+            if (uikit) uikit.textContent = '';
+            else moneyEl.textContent = '';
+          }}
           sub.textContent = 'Нет трат в\\u00a0' + month;
+          sub.setAttribute('data-manual-panel-sync', '1');
+          if (wrap) wrap.setAttribute('data-manual-panel-sync', '1');
         }}
-        sub.setAttribute('data-manual-panel-sync', '1');
       }}
       const lineChart = root.querySelector('[data-qa-type="lineChart"]');
-      if (!lineChart) return;
-      const bar =
-        lineChart.querySelector('.db5ygiFRy')
-        || lineChart.querySelector('[class*="db5ygiFRy"]');
-      const track =
-        lineChart.querySelector('.bb5ygiFRy')
-        || lineChart.querySelector('[class*="bb5ygiFRy"]');
-      if (exp > 0) {{
-        if (bar) {{
-          bar.setAttribute('data-manual-payment-history-chart', '1');
-          bar.style.backgroundImage = FIN_SPENDING_STRIPE_GRADIENT;
-          bar.style.backgroundSize = '100% 100%';
-          bar.style.backgroundRepeat = 'no-repeat';
-          bar.style.minHeight = '6px';
-          bar.style.borderRadius = '2px';
+      if (!lineChart || !debitAcct) return;
+      clearManualPumbaLineChart(lineChart);
+      if (hasPumbaNativeFillers(lineChart)) {{
+        schedulePumbaLineChartHomeShape(lineChart);
+      }} else if (exp > 0) {{
+        if (pumbaLineChartTrackHost(lineChart)) {{
+          ensurePumbaAccountPageStripeWhenNoFillers(lineChart, exp);
+          requestAnimationFrame(function () {{
+            requestAnimationFrame(function () {{ ensurePumbaAccountPageStripeWhenNoFillers(lineChart, exp); }});
+          }});
+        }} else {{
+          applyManualPumbaLineChartSpending(lineChart);
         }}
-        if (track) track.style.opacity = '0.92';
-      }} else {{
-        if (bar && bar.getAttribute('data-manual-payment-history-chart') === '1') {{
-          bar.style.backgroundImage = '';
-          bar.style.backgroundSize = '';
-          bar.style.backgroundRepeat = '';
-          bar.style.minHeight = '';
-          bar.style.borderRadius = '';
-          bar.removeAttribute('data-manual-payment-history-chart');
-        }}
-        if (track) track.style.opacity = '';
       }}
     }});
+    ensureDebitAccountLowerBlocks();
   }}
 
   function applyFinanalyticsFromTotals(d) {{
-    if (!ENABLE_BROWSER_FIN_DOM_PATCH) return;
     const inc = Number(d && d.income);
     const exp = Number(d && d.expense);
+    syncMobilePumbaPaymentHistory(inc, exp);
+    if (!ENABLE_BROWSER_FIN_DOM_PATCH) return;
     if (shouldPatchFinanalyticsDom()) {{
       collectSpendingFinCards().forEach(function (c) {{
         patchFinanalyticsCard(c, exp, 'Нет трат', 'Траты', false);
@@ -721,15 +1235,13 @@ def _build_script() -> str:
         patchFinanalyticsCard(c, inc, 'Нет доходов', 'Доходы', true);
       }});
     }}
-    syncMobilePumbaPaymentHistory(inc, exp);
   }}
 
   function syncFinanalyticsCards() {{
-    if (!ENABLE_BROWSER_FIN_DOM_PATCH) return;
     if (!shouldSyncFinanalyticsCards()) return;
     applyFinanalyticsFromTotals(PANEL_TOTALS_SNAPSHOT);
     const now = Date.now();
-    if (now - __finCardLastFetch < 1500 || __finCardInFlight) return;
+    if (now - __finCardLastFetch < 480 || __finCardInFlight) return;
     __finCardLastFetch = now;
     __finCardInFlight = true;
     fetchJsonFirstOk(_panelUrlVariants(PANEL_INCOME_EXPENSE_URL))
@@ -739,7 +1251,7 @@ def _build_script() -> str:
   }}
 
   const RUB_ICON_HTML = `
-<span data-component-type="platform-ui" iconpath="&lt;svg viewBox=&quot;0 0 24 24&quot; xmlns=&quot;http://www.w3.org/2000/svg&quot; focusable=&quot;false&quot;&gt;&lt;defs&gt;&lt;linearGradient id=&quot;paint0_linear_1524_1586&quot; x1=&quot;3.8&quot; y1=&quot;3.8&quot; x2=&quot;19.2&quot; y2=&quot;19.2&quot; gradientUnits=&quot;userSpaceOnUse&quot;&gt;&lt;stop stop-color=&quot;currentColor&quot;/&gt;&lt;stop offset=&quot;1&quot; stop-opacity=&quot;.7&quot; stop-color=&quot;currentColor&quot;/&gt;&lt;/linearGradient&gt;&lt;/defs&gt;&lt;path fill-rule=&quot;evenodd&quot; clip-rule=&quot;evenodd&quot; d=&quot;M12 .5C5.649.5.5 5.649.5 12S5.649 23.5 12 23.5 23.5 18.351 23.5 12 18.351.5 12 .5ZM9 11V6h3.96c1.017 0 2.072.154 2.821.841C16.396 7.405 17 8.271 17 9.5c0 1.229-.604 2.095-1.218 2.659-.75.688-1.805.841-2.823.841H11.5v1.041H15A1.959 1.959 0 0 1 13.041 16H11.5v.063a2 2 0 0 1-2 2H9V16l-1.5-.041V15.5A1.46 1.46 0 0 1 9 14.041V13l-1.5-.041v-.5A1.46 1.46 0 0 1 9 11Zm4-3h-1.5v3H13s1.5.106 1.5-1.447C14.5 8 13 8 13 8Z&quot; fill=&quot;url(#paint0_linear_1524_1586)&quot;/&gt;&lt;/svg&gt;" data-qa-type="uikit/icon" class="abLiNt-Lr" style="width: 40px; height: 40px; color: var(--tui-text-primary-on-dark);"><span class="bbLiNt-Lr" style="background: var(--tui-background-accent-2);"></span><span data-qa-type="uikit/icon.content" class="cbLiNt-Lr" role="presentation" style="width: 24px; height: 24px;"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" focusable="false"><defs><linearGradient id="dsId_mVUrA8vdg80_linear_1524_1586" x1="3.8" y1="3.8" x2="19.2" y2="19.2" gradientUnits="userSpaceOnUse"><stop stop-color="currentColor"></stop><stop offset="1" stop-opacity=".7" stop-color="currentColor"></stop></linearGradient></defs><path fill-rule="evenodd" clip-rule="evenodd" d="M12 .5C5.649.5.5 5.649.5 12S5.649 23.5 12 23.5 23.5 18.351 23.5 12 18.351.5 12 .5ZM9 11V6h3.96c1.017 0 2.072.154 2.821.841C16.396 7.405 17 8.271 17 9.5c0 1.229-.604 2.095-1.218 2.659-.75.688-1.805.841-2.823.841H11.5v1.041H15A1.959 1.959 0 0 1 13.041 16H11.5v.063a2 2 0 0 1-2 2H9V16l-1.5-.041V15.5A1.46 1.46 0 0 1 9 14.041V13l-1.5-.041v-.5A1.46 1.46 0 0 1 9 11Zm4-3h-1.5v3H13s1.5.106 1.5-1.447C14.5 8 13 8 13 8Z" fill="url(#dsId_mVUrA8vdg80_linear_1524_1586)"></path></svg></span></span>`;
+<span data-component-type="platform-ui" iconpath="&lt;svg viewBox=&quot;0 0 24 24&quot; xmlns=&quot;http://www.w3.org/2000/svg&quot; focusable=&quot;false&quot;&gt;&lt;defs&gt;&lt;linearGradient id=&quot;paint0_linear_1524_1586&quot; x1=&quot;3.8&quot; y1=&quot;3.8&quot; x2=&quot;19.2&quot; y2=&quot;19.2&quot; gradientUnits=&quot;userSpaceOnUse&quot;&gt;&lt;stop stop-color=&quot;currentColor&quot;/&gt;&lt;stop offset=&quot;1&quot; stop-opacity=&quot;.7&quot; stop-color=&quot;currentColor&quot;/&gt;&lt;/linearGradient&gt;&lt;/defs&gt;&lt;path fill-rule=&quot;evenodd&quot; clip-rule=&quot;evenodd&quot; d=&quot;M12 .5C5.649.5.5 5.649.5 12S5.649 23.5 12 23.5 23.5 18.351 23.5 12 18.351.5 12 .5ZM9 11V6h3.96c1.017 0 2.072.154 2.821.841C16.396 7.405 17 8.271 17 9.5c0 1.229-.604 2.095-1.218 2.659-.75.688-1.805.841-2.823.841H11.5v1.041H15A1.959 1.959 0 0 1 13.041 16H11.5v.063a2 2 0 0 1-2 2H9V16l-1.5-.041V15.5A1.46 1.46 0 0 1 9 14.041V13l-1.5-.041v-.5A1.46 1.46 0 0 1 9 11Zm4-3h-1.5v3H13s1.5.106 1.5-1.447C14.5 8 13 8 13 8Z&quot; fill=&quot;url(#paint0_linear_1524_1586)&quot;/&gt;&lt;/svg&gt;" data-qa-type="uikit/icon" class="abH-Kb5MJ" style="width: 40px; height: 40px; color: var(--tui-text-primary-on-dark);"><span class="bbH-Kb5MJ" style="background: var(--tui-background-accent-2);"></span><span data-qa-type="uikit/icon.content" class="cbH-Kb5MJ" role="presentation" style="width: 24px; height: 24px;"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" focusable="false"><defs><linearGradient id="dsId_manualAcct_linear_1524_1586" x1="3.8" y1="3.8" x2="19.2" y2="19.2" gradientUnits="userSpaceOnUse"><stop stop-color="currentColor"></stop><stop offset="1" stop-opacity=".7" stop-color="currentColor"></stop></linearGradient></defs><path fill-rule="evenodd" clip-rule="evenodd" d="M12 .5C5.649.5.5 5.649.5 12S5.649 23.5 12 23.5 23.5 18.351 23.5 12 18.351.5 12 .5ZM9 11V6h3.96c1.017 0 2.072.154 2.821.841C16.396 7.405 17 8.271 17 9.5c0 1.229-.604 2.095-1.218 2.659-.75.688-1.805.841-2.823.841H11.5v1.041H15A1.959 1.959 0 0 1 13.041 16H11.5v.063a2 2 0 0 1-2 2H9V16l-1.5-.041V15.5A1.46 1.46 0 0 1 9 14.041V13l-1.5-.041v-.5A1.46 1.46 0 0 1 9 11Zm4-3h-1.5v3H13s1.5.106 1.5-1.447C14.5 8 13 8 13 8Z" fill="url(#dsId_manualAcct_linear_1524_1586)"></path></svg></span></span>`;
 
   function isOperationsDetailPage() {{
     if (location.pathname.indexOf('/mybank') === -1) return false;
@@ -783,30 +1295,61 @@ def _build_script() -> str:
     return false;
   }}
 
+  function touchManualDetailStylesOrder() {{
+    const st =
+      document.getElementById('manual-detail-pumba-cards-v21')
+      || document.getElementById('manual-detail-pumba-cards-v20')
+      || document.getElementById('manual-detail-pumba-cards-v19')
+      || document.getElementById('manual-detail-pumba-cards-v18')
+      || document.getElementById('manual-detail-pumba-cards-v17')
+      || document.getElementById('manual-detail-pumba-cards-v16')
+      || document.getElementById('manual-detail-pumba-cards-v15')
+      || document.getElementById('manual-detail-pumba-cards-v14')
+      || document.getElementById('manual-detail-pumba-cards-v13')
+      || document.getElementById('manual-detail-pumba-cards-v12')
+      || document.getElementById('manual-detail-pumba-cards-v11')
+      || document.getElementById('manual-detail-pumba-cards-v10')
+      || document.getElementById('manual-detail-pumba-cards-v9')
+      || document.getElementById('manual-detail-pumba-cards-v8')
+      || document.getElementById('manual-detail-pumba-cards-v7')
+      || document.getElementById('manual-detail-pumba-cards-v6');
+    if (st && st.parentNode === document.head && document.head.lastElementChild !== st) {{
+      try {{ document.head.appendChild(st); }} catch (eOrd) {{}}
+    }}
+  }}
+
   function injectManualDetailStyles() {{
-    if (document.getElementById('manual-detail-pumba-cards-v5')) return;
-    ['manual-detail-pumba-cards-v3', 'manual-detail-pumba-cards-v4'].forEach(function (lid) {{
+    if (document.getElementById('manual-detail-pumba-cards-v21')) return;
+    ['manual-detail-pumba-cards-v3', 'manual-detail-pumba-cards-v4', 'manual-detail-pumba-cards-v5', 'manual-detail-pumba-cards-v6', 'manual-detail-pumba-cards-v7', 'manual-detail-pumba-cards-v8', 'manual-detail-pumba-cards-v9', 'manual-detail-pumba-cards-v10', 'manual-detail-pumba-cards-v11', 'manual-detail-pumba-cards-v12', 'manual-detail-pumba-cards-v13', 'manual-detail-pumba-cards-v14', 'manual-detail-pumba-cards-v15', 'manual-detail-pumba-cards-v16', 'manual-detail-pumba-cards-v17', 'manual-detail-pumba-cards-v18', 'manual-detail-pumba-cards-v19', 'manual-detail-pumba-cards-v20'].forEach(function (lid) {{
       const legacy = document.getElementById(lid);
       if (legacy) {{
         try {{ legacy.remove(); }} catch (eL) {{}}
       }}
     }});
     const st = document.createElement('style');
-    st.id = 'manual-detail-pumba-cards-v5';
+    st.id = 'manual-detail-pumba-cards-v21';
     st.textContent = `
-/* Инжект: ширина и отступ до «Реквизиты» */
+/* Инжект: ширина; горизонтальный padding даёт independent-pumba-operation-details-container — не дублировать */
 [data-manual-injected-account-cards="1"][data-qa-type="accountCardsShown-wrapper"],
 [data-manual-injected-account-cards="1"] {{
   width: 100% !important;
   max-width: 100% !important;
   box-sizing: border-box !important;
   display: block !important;
-  margin: 0 0 1.25rem 0 !important;
+  margin: 0 0 22px 0 !important;
   padding: 0 !important;
+  overflow-x: visible !important;
 }}
+/* Убрать огромный 20px gap под молекулой внутри шелла; зазор между карточками «Перевод» и «Реквизиты» — margin снизу обёртки */
 [data-manual-injected-account-cards="1"] > [data-component-type="platform-ui"][style*="--gaps"] {{
   width: 100% !important;
   box-sizing: border-box !important;
+  --gaps: 0px !important;
+  gap: 0 !important;
+}}
+[data-manual-injected-account-cards="1"] [data-qa-type="uikit/NotificationStack"].abhURjxRW,
+[data-manual-injected-account-cards="1"] .abeiuVKPb {{
+  display: none !important;
 }}
 /* Карточка elevated — как в bottom sheet Т‑Банка (24px, --tui-shadow-medium) */
 [data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation"][data-surface="true"],
@@ -820,24 +1363,24 @@ def _build_script() -> str:
 [data-panel-manual-black-card="1"] [data-qa-type="tui/surface-layer"] {{
   border-radius: inherit !important;
 }}
-/* Секции шапки и строки счёта — блочно, друг под другом */
+/* Секции шапки и строки счёта — блочно, друг под другом (и инжект, и патч нативной карточки) */
 [data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] .bbIfdcMse,
 [data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] .ebIfdcMse,
 [data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] .bb82ltuCV,
-[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] .eb82ltuCV {{
+[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] .eb82ltuCV,
+[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] .bbyhDFZ1P,
+[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] .ebyhDFZ1P,
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation"] .bbIfdcMse,
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation"] .ebIfdcMse,
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation"] .bb82ltuCV,
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation"] .eb82ltuCV,
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation"] .bbyhDFZ1P,
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation"] .ebyhDFZ1P {{
   display: block !important;
   width: 100% !important;
   box-sizing: border-box !important;
 }}
-[data-manual-bank-wrapper="1"] [data-qa-type="atom-panel"][data-surface="true"][data-appearance="elevated"] {{
-  position: relative !important;
-  border-radius: 24px !important;
-  background-color: var(--tui-background-elevation-1, #fff) !important;
-  box-shadow: var(--tui-shadow-medium, 0px 6px 34px 0px #0000001f) !important;
-}}
-[data-manual-bank-wrapper="1"] [data-qa-type="tui/surface-layer"] {{
-  border-radius: inherit !important;
-}}
+/* Паддинги «Перевод» / «Реквизиты» — из CSS приложения (bbyhDFZ1P, bb41GSHng, ab4U6BtRY и т.д.), здесь не дублируем */
 [data-manual-bank-wrapper="1"] {{
   margin-top: 0 !important;
 }}
@@ -851,7 +1394,8 @@ def _build_script() -> str:
   margin-top: 0 !important;
 }}
 /* Только строка с h2 + «Справка» (не внешняя оболочка с вложенным header) */
-[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] [data-qa-type="tui/header.wrapper"]:has(> h2[data-qa-type="tui/header.title"]) {{
+[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] [data-qa-type="tui/header.wrapper"]:has(> h2[data-qa-type="tui/header.title"]),
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation"] [data-qa-type="tui/header.wrapper"]:has(> h2[data-qa-type="tui/header.title"]) {{
   display: flex !important;
   flex-direction: row !important;
   align-items: center !important;
@@ -860,30 +1404,59 @@ def _build_script() -> str:
   box-sizing: border-box !important;
   gap: 0.5rem !important;
 }}
-[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] h2[data-qa-type="tui/header.title"] {{
+[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] h2[data-qa-type="tui/header.title"],
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation"] h2[data-qa-type="tui/header.title"] {{
   flex: 1 1 auto !important;
   min-width: 0 !important;
   margin: 0 !important;
 }}
-[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] [data-qa-type="tui/header.accessories"] {{
+[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] [data-qa-type="tui/header.accessories"],
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation"] [data-qa-type="tui/header.accessories"] {{
   flex-shrink: 0 !important;
 }}
 /* Строка счёта: три колонки — иконка | текстовый столбец | шеврон */
-[data-panel-manual-black-card="1"] button[data-qa-type="tui/cell"] {{
+[data-panel-manual-black-card="1"] button[data-qa-type="tui/cell"],
+[data-manual-injected-account-cards="1"] button[data-qa-type="tui/cell"] {{
   display: flex !important;
   flex-direction: row !important;
   flex-wrap: nowrap !important;
   align-items: center !important;
+  gap: 12px !important;
   width: 100% !important;
   box-sizing: border-box !important;
   text-align: left !important;
 }}
-[data-panel-manual-black-card="1"] button[data-qa-type="tui/cell"] > div:first-child {{
-  flex: 0 0 auto !important;
+/* Иконка ₽ — ровно 40px, без пустого «поля» слева от подписей (как в витрине) */
+[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] button[data-qa-type="tui/cell"] > div:first-child,
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation"] button[data-qa-type="tui/cell"] > div:first-child {{
+  flex: 0 0 40px !important;
+  width: 40px !important;
+  min-width: 40px !important;
+  max-width: 40px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+}}
+[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] button[data-qa-type="tui/cell"] .gbYDLs9QJ,
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation"] button[data-qa-type="tui/cell"] .gbYDLs9QJ {{
+  margin-left: 0 !important;
+  padding-left: 4px !important;
+}}
+[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] button[data-qa-type="tui/cell"],
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation"] button[data-qa-type="tui/cell"] {{
+  gap: 10px !important;
 }}
 [data-panel-manual-black-card="1"] button[data-qa-type="tui/cell"] > div:nth-child(2),
 [data-panel-manual-black-card="1"] button[data-qa-type="tui/cell"] .gbDhaGPUV,
-[data-panel-manual-black-card="1"] button[data-qa-type="tui/cell"] .gbvaqWFmO {{
+[data-panel-manual-black-card="1"] button[data-qa-type="tui/cell"] .gbvaqWFmO,
+[data-panel-manual-black-card="1"] button[data-qa-type="tui/cell"] .gbYDLs9QJ,
+[data-manual-injected-account-cards="1"] button[data-qa-type="tui/cell"] > div:nth-child(2),
+[data-manual-injected-account-cards="1"] button[data-qa-type="tui/cell"] .gbDhaGPUV,
+[data-manual-injected-account-cards="1"] button[data-qa-type="tui/cell"] .gbvaqWFmO,
+[data-manual-injected-account-cards="1"] button[data-qa-type="tui/cell"] .gbYDLs9QJ {{
   flex: 1 1 auto !important;
   min-width: 0 !important;
   display: flex !important;
@@ -892,27 +1465,104 @@ def _build_script() -> str:
   justify-content: center !important;
   gap: 0.125rem !important;
 }}
-[data-panel-manual-black-card="1"] button[data-qa-type="tui/cell"] > div:last-child {{
+[data-panel-manual-black-card="1"] button[data-qa-type="tui/cell"] > div:last-child,
+[data-manual-injected-account-cards="1"] button[data-qa-type="tui/cell"] > div:last-child {{
   flex: 0 0 auto !important;
   margin-left: auto !important;
 }}
 [data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation-chevron"],
-[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation-chevron"] [data-qa-type="uikit/icon.content"] {{
+[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation-chevron"] [data-qa-type="uikit/icon.content"],
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation-chevron"],
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation-chevron"] [data-qa-type="uikit/icon.content"] {{
   width: 8px !important;
   height: 16px !important;
   max-width: 8px !important;
   min-width: 8px !important;
   flex-shrink: 0 !important;
 }}
-[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation-chevron"] svg {{
+[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation-chevron"] svg,
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation-chevron"] svg {{
   width: 8px !important;
   height: 16px !important;
   display: block !important;
 }}
-[data-panel-manual-black-card="1"] p[data-qa-type="molecule-account-operation-balance"] {{
+[data-panel-manual-black-card="1"] p[data-qa-type="molecule-account-operation-balance"],
+[data-manual-injected-account-cards="1"] p[data-qa-type="molecule-account-operation-balance"] {{
   margin: 0 !important;
   min-width: 0 !important;
   width: 100% !important;
+  font: var(--tui-typography-body-s, 400 13px/1.3846 Roboto, system-ui, sans-serif) !important;
+  font-weight: 400 !important;
+  color: var(--tui-text-secondary, #9299a2) !important;
+}}
+[data-panel-manual-black-card="1"] p[data-qa-type="molecule-account-operation-balance"] [data-qa-type="atom-sensitive"],
+[data-manual-injected-account-cards="1"] p[data-qa-type="molecule-account-operation-balance"] [data-qa-type="atom-sensitive"] {{
+  font: inherit !important;
+  font-weight: 400 !important;
+  color: inherit !important;
+}}
+/* Имя счёта (верхняя строка «Black»): regular, тёмно-серый как на витрине; не .gbYDLs9QJ span внутри p баланса */
+[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] button[data-qa-type="tui/cell"] .ebvaqWFmO,
+[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] button[data-qa-type="tui/cell"] .gbvaqWFmO > .ebvaqWFmO,
+[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] button[data-qa-type="tui/cell"] .gbvaqWFmO > .ebvaqWFmO span,
+[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] button[data-qa-type="tui/cell"] .ebYDLs9QJ,
+[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] button[data-qa-type="tui/cell"] .gbYDLs9QJ > .ebYDLs9QJ,
+[data-panel-manual-black-card="1"] [data-qa-type="molecule-account-operation"] button[data-qa-type="tui/cell"] .gbYDLs9QJ > .ebYDLs9QJ span,
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation"] button[data-qa-type="tui/cell"] .ebvaqWFmO,
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation"] button[data-qa-type="tui/cell"] .gbvaqWFmO > .ebvaqWFmO,
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation"] button[data-qa-type="tui/cell"] .gbvaqWFmO > .ebvaqWFmO span,
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation"] button[data-qa-type="tui/cell"] .ebYDLs9QJ,
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation"] button[data-qa-type="tui/cell"] .gbYDLs9QJ > .ebYDLs9QJ,
+[data-manual-injected-account-cards="1"] [data-qa-type="molecule-account-operation"] button[data-qa-type="tui/cell"] .gbYDLs9QJ > .ebYDLs9QJ span {{
+  font: var(--tui-typography-body-l, 400 16px/1.4375 Roboto, system-ui, sans-serif) !important;
+  font-weight: 400 !important;
+  color: #575B61 !important;
+  -webkit-font-smoothing: antialiased !important;
+}}
+/* Реквизиты: ширина обёрток; типографика/тени/отступы — только из CSS Т‑Банка по классам atom-panel / hbQgksk7i */
+[data-qa-type="bankDetailsShown-wrapper"][data-manual-bank-wrapper="1"],
+[data-qa-type="bankDetailsShown-wrapper"]:has([data-manual-requisites-panel="1"]) {{
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  overflow-x: visible !important;
+}}
+[data-manual-requisites-panel="1"][data-qa-type="mobile-pumba-requisites-operation"],
+[data-manual-bank-wrapper="1"] [data-qa-type="mobile-pumba-requisites-operation"] {{
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}}
+/* Строки реквизитов — чуть правее, вровень с началом заголовка «Реквизиты» */
+[data-manual-bank-wrapper="1"] [data-qa-type="mobile-pumba-requisites-operation"] [data-qa-type="visible-requisites"],
+[data-manual-requisites-panel="1"] [data-qa-type="visible-requisites"] {{
+  padding-left: 4px !important;
+  box-sizing: border-box !important;
+}}
+[data-qa-type="requisite"][data-manual-requisite-row="1"] {{
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}}
+[data-qa-type="requisite"][data-manual-requisite-row="1"] > div {{
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}}
+[data-qa-type="mobile-pumba-account-operation"][data-panel-manual-black-card="1"] button[data-qa-type="tui/cell"],
+[data-manual-injected-account-cards="1"] [data-qa-type="mobile-pumba-account-operation"] button[data-qa-type="tui/cell"] {{
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  gap: 10px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  text-align: left !important;
 }}
 `;
     (document.head || document.documentElement).appendChild(st);
@@ -1381,7 +2031,7 @@ def _build_script() -> str:
     const type = detectOperationTypeFromPage();
     const title = detectOperationTitleFromPage();
     let phone = '';
-    const reqValue = document.querySelector('[data-qa-type="visible-requisites"] .ebw2AqQYk, [data-qa-type="visible-requisites"] .ebTpecb88, [data-qa-type="visible-requisites"] .ebKtz2I68');
+    const reqValue = document.querySelector('[data-qa-type="visible-requisites"] .ebQgksk7i, [data-qa-type="visible-requisites"] .ebw2AqQYk, [data-qa-type="visible-requisites"] .ebTpecb88, [data-qa-type="visible-requisites"] .ebKtz2I68');
     if (reqValue) phone = String(reqValue.textContent || '').trim();
     return {{
       id: '',
@@ -1402,7 +2052,7 @@ def _build_script() -> str:
     const type = detectOperationTypeFromPage();
     const title = detectOperationTitleFromPage();
     let phone = '';
-    const reqValue = root.querySelector('[data-qa-type="visible-requisites"] .ebw2AqQYk, [data-qa-type="visible-requisites"] .ebTpecb88, [data-qa-type="visible-requisites"] .ebKtz2I68');
+    const reqValue = root.querySelector('[data-qa-type="visible-requisites"] .ebQgksk7i, [data-qa-type="visible-requisites"] .ebw2AqQYk, [data-qa-type="visible-requisites"] .ebTpecb88, [data-qa-type="visible-requisites"] .ebKtz2I68');
     if (reqValue) phone = String(reqValue.textContent || '').trim();
     return {{
       id: '',
@@ -1471,8 +2121,30 @@ def _build_script() -> str:
     }}
     const accountCell = root.querySelector('[data-qa-type="tui/cell"]');
     if (accountCell) {{
+      try {{
+        accountCell.style.setProperty('display', 'flex', 'important');
+        accountCell.style.setProperty('flex-direction', 'row', 'important');
+        accountCell.style.setProperty('flex-wrap', 'nowrap', 'important');
+        accountCell.style.setProperty('align-items', 'center', 'important');
+        accountCell.style.setProperty('width', '100%', 'important');
+        accountCell.style.setProperty('box-sizing', 'border-box', 'important');
+        const ch = accountCell.children;
+        if (ch && ch.length >= 2) {{
+          const mid = ch[1];
+          if (mid && mid.style) {{
+            mid.style.setProperty('display', 'flex', 'important');
+            mid.style.setProperty('flex-direction', 'column', 'important');
+            mid.style.setProperty('flex', '1 1 auto', 'important');
+            mid.style.setProperty('min-width', '0', 'important');
+            mid.style.setProperty('align-items', 'flex-start', 'important');
+            mid.style.setProperty('justify-content', 'center', 'important');
+          }}
+        }}
+      }} catch (eCellLayout) {{}}
       const iconNode = accountCell.querySelector('[data-qa-type="molecule-account-operation-account-icon"]');
-      if (iconNode) iconNode.innerHTML = RUB_ICON_HTML;
+      if (iconNode && !iconNode.querySelector('[data-qa-type="uikit/icon"] .bbH-Kb5MJ')) {{
+        iconNode.innerHTML = RUB_ICON_HTML;
+      }}
       const blackNode = findAccountCellCounterpartyNameNode(accountCell);
       if (blackNode) blackNode.textContent = 'Black';
     }}
@@ -1628,6 +2300,7 @@ def _build_script() -> str:
 
   function makeManualRequisiteRow(label, value) {{
     const wrap = document.createElement('div');
+    wrap.setAttribute('data-manual-requisite-row', '1');
     wrap.setAttribute('data-qa-type', 'requisite');
     wrap.setAttribute('data-interactive', 'false');
     wrap.setAttribute('data-height-mode', 'default');
@@ -1635,14 +2308,14 @@ def _build_script() -> str:
     wrap.setAttribute('data-vertical-spacing', 'default');
     wrap.setAttribute('data-connected', 'false');
     wrap.setAttribute('data-component-type', 'tui-react');
-    wrap.className = 'hbw2AqQYk';
+    wrap.className = 'hbQgksk7i';
     const inner = document.createElement('div');
-    inner.className = 'gbw2AqQYk';
+    inner.className = 'gbQgksk7i';
     const p = document.createElement('p');
-    p.className = 'dbw2AqQYk';
+    p.className = 'dbQgksk7i';
     p.textContent = label;
     const val = document.createElement('div');
-    val.className = 'ebw2AqQYk abUN2WF6O';
+    val.className = 'ebQgksk7i abhFnGE_2';
     val.textContent = value;
     inner.appendChild(p);
     inner.appendChild(val);
@@ -1771,7 +2444,7 @@ def _build_script() -> str:
       host = document.createElement('div');
       host.setAttribute('data-qa-type', 'bankDetailsShown-wrapper');
       host.setAttribute('data-manual-bank-wrapper', '1');
-      host.className = 'abwoLn9PY';
+      host.className = 'abVXAIVX5';
       host.setAttribute('data-component-type', 'platform-ui');
       host.innerHTML = MANUAL_BANK_DETAILS_INNER_HTML;
       detailsContainer.appendChild(host);
@@ -1780,11 +2453,24 @@ def _build_script() -> str:
     let panel = host.querySelector('[data-manual-requisites-panel="1"]');
     if (!panel) {{
       if (host.getAttribute('data-manual-bank-wrapper') === '1') {{
-        host.className = 'abwoLn9PY';
+        host.className = 'abVXAIVX5';
         host.setAttribute('data-component-type', 'platform-ui');
         host.innerHTML = MANUAL_BANK_DETAILS_INNER_HTML;
       }} else {{
-        const gap = host.querySelector('.abVdrB8kC');
+        const gapsRows = Array.from(host.querySelectorAll('div[data-component-type="platform-ui"][style*="--gaps: 20px"]'));
+        let gap = null;
+        for (let i = gapsRows.length - 1; i >= 0; i--) {{
+          if (gapsRows[i].querySelector('[data-qa-type="mobile-pumba-requisites-operation"]')) {{
+            gap = gapsRows[i];
+            break;
+          }}
+        }}
+        if (!gap && gapsRows.length) {{
+          gap = gapsRows[gapsRows.length - 1];
+        }}
+        if (!gap) {{
+          gap = host.querySelector('.abVdrB8kC') || host.querySelector('.abXrZFFIQ');
+        }}
         if (gap) {{
           const tmp = document.createElement('div');
           tmp.innerHTML = MANUAL_BANK_DETAILS_INNER_HTML;
@@ -1933,25 +2619,44 @@ def _build_script() -> str:
     injectManualDetailStyles();
     patchDetailDom();
     let timer = 0;
-    const observer = new MutationObserver(() => {{
+    const schedulePatch = function () {{
       clearTimeout(timer);
-      timer = window.setTimeout(patchDetailDom, 220);
-    }});
+      timer = window.setTimeout(patchDetailDom, 42);
+    }};
+    const observer = new MutationObserver(schedulePatch);
     if (document.body) {{
       observer.observe(document.body, {{ childList: true, subtree: true }});
     }}
-    window.setInterval(patchDetailDom, 1000);
+    try {{
+      window.addEventListener('popstate', patchDetailDom, {{ passive: true }});
+    }} catch (ePs) {{}}
+    window.setInterval(patchDetailDom, 1100);
   }}
 
   function startFinanalyticsCardSync() {{
     function tick() {{
       syncFinanalyticsCards();
+      try {{ ensureDebitAccountLowerBlocks(); }} catch (eTail) {{}}
     }}
     tick();
-    window.setInterval(tick, 2000);
+    let __finMoTimer = 0;
+    function scheduleFromDom() {{
+      window.clearTimeout(__finMoTimer);
+      __finMoTimer = window.setTimeout(tick, 140);
+    }}
+    try {{
+      const moRoot =
+        document.querySelector('main[data-qa-type="mobile-ib-container"]')
+        || document.querySelector('main')
+        || document.body;
+      const mo = new MutationObserver(scheduleFromDom);
+      mo.observe(moRoot, {{ childList: true, subtree: true }});
+    }} catch (eMo) {{}}
+    window.setInterval(tick, 1600);
   }}
 
   bindManualCertReceiptClick();
+  bindOrderCertificateStatementsClick();
 
   if (document.readyState === 'loading') {{
     document.addEventListener('DOMContentLoaded', function () {{
@@ -1976,6 +2681,9 @@ def response(flow: http.HTTPFlow) -> None:
     ensure_response_decoded(flow)
     url = (flow.request.pretty_url or "").lower()
     if "/mybank" not in url:
+        return
+    # Не вмешиваться в HTML «Справок» — тяжёлый скрипт + CSP; диагностика «страница не грузится».
+    if "/mybank/statements" in url or "mybank%2fstatements" in url:
         return
     content_type = (flow.response.headers.get("content-type") or "").lower()
     if "text/html" not in content_type:

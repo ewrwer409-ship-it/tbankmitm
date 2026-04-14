@@ -3,25 +3,13 @@
 Логотипы: bank_merchants_presets.json → bank_preset
 Карта: config.json → balance.new_card_number
 
-manual ops updated: injected=3 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations_category_list_bank?platform=web&appName=supreme&appVersion=0.0.1&origin=web&sessionid=3ZOruxvPxjCDBligodKqS8eyHgl3enE6.authenticon-8b78479b4-g97gb
+manual ops updated: injected=2 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations_category_list_bank?platform=web&appName=supreme&appVersion=0.0.1&origin=web&sessionid=ZHofoQ5AIKQlRdGuO3yYwtMgSZf2rXlv.authenticon-54775dfc79-b24kc
 
-manual ops updated: injected=3 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations_category_list_user?platform=web&appName=supreme&appVersion=0.0.1&origin=web&sessionid=3ZOruxvPxjCDBligodKqS8eyHgl3enE6.authenticon-8b78479b4-g97gb
+manual ops updated: injected=2 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations_category_list_user?platform=web&appName=supreme&appVersion=0.0.1&origin=web&sessionid=ZHofoQ5AIKQlRdGuO3yYwtMgSZf2rXlv.authenticon-54775dfc79-b24kc
 
-manual ops updated: injected=3 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations?appName=supreme&appVersion=0.0.1&origin=web%2Cib5%2Cplatform&sessionid=3ZOruxvPxjCDBligodKqS8eyHgl3enE6.authenticon-8b78479b4-g97gb&start=1775643254794&end=1775816054794
+manual ops updated: injected=2 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations?appName=supreme&appVersion=0.0.1&origin=web%2Cib5%2Cplatform&sessionid=ZHofoQ5AIKQlRdGuO3yYwtMgSZf2rXlv.authenticon-54775dfc79-b24kc&end=1776288458289&start=1773608400000
 
-manual ops updated: injected=3 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations?appName=supreme&appVersion=0.0.1&origin=web%2Cib5%2Cplatform&sessionid=3ZOruxvPxjCDBligodKqS8eyHgl3enE6.authenticon-8b78479b4-g97gb&end=1775816296234&start=1773090000000
+manual ops updated: injected=2 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations?appName=supreme&appVersion=0.0.1&origin=web%2Cib5%2Cplatform&sessionid=ZHofoQ5AIKQlRdGuO3yYwtMgSZf2rXlv.authenticon-54775dfc79-b24kc&start=1776115658617&end=1776288458617
 
-manual ops updated: injected=3 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations_category_list_user?platform=web&appName=supreme&appVersion=0.0.1&origin=web&sessionid=3CFptxw4mMr6RPrEUJV3ntQfjIbNz6mK.authenticon-8b78479b4-g97gb
-
-manual ops updated: injected=3 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations_category_list_bank?platform=web&appName=supreme&appVersion=0.0.1&origin=web&sessionid=3CFptxw4mMr6RPrEUJV3ntQfjIbNz6mK.authenticon-8b78479b4-g97gb
-
-manual ops updated: injected=3 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations?appName=supreme&appVersion=0.0.1&origin=web%2Cib5%2Cplatform&sessionid=3CFptxw4mMr6RPrEUJV3ntQfjIbNz6mK.authenticon-8b78479b4-g97gb&end=1775816307632&start=1773090000000
-
-manual ops updated: injected=3 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations?appName=supreme&appVersion=0.0.1&origin=web%2Cib5%2Cplatform&sessionid=3CFptxw4mMr6RPrEUJV3ntQfjIbNz6mK.authenticon-8b78479b4-g97gb&start=1775643508033&end=1775816308033
-
-manual ops updated: injected=3 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations?appName=supreme&appVersion=0.0.1&origin=web%2Cib5%2Cplatform&sessionid=3CFptxw4mMr6RPrEUJV3ntQfjIbNz6mK.authenticon-8b78479b4-g97gb&start=1775643508002&end=1775816308002
-
-manual ops updated: injected=3 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations?appName=supreme&appVersion=0.0.1&origin=web%2Cib5%2Cplatform&sessionid=3CFptxw4mMr6RPrEUJV3ntQfjIbNz6mK.authenticon-8b78479b4-g97gb&start=1775643507972&end=1775816307972
-
-manual ops updated: injected=3 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations?appName=supreme&appVersion=0.0.1&origin=web%2Cib5%2Cplatform&sessionid=3CFptxw4mMr6RPrEUJV3ntQfjIbNz6mK.authenticon-8b78479b4-g97gb&start=1775639279434&end=1775812079434
+manual ops updated: injected=2 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations?appName=supreme&appVersion=0.0.1&origin=web%2Cib5%2Cplatform&sessionid=ZHofoQ5AIKQlRdGuO3yYwtMgSZf2rXlv.authenticon-54775dfc79-b24kc&end=1776288472937&start=1773608400000
 

@@ -210,7 +210,20 @@ def response(flow: http.HTTPFlow) -> None:
             pass
 
     # ========== ОПЕРАЦИИ ПО СЧЁТУ ==========
-    if "statements" in url and 'application/json' in flow.response.headers.get('content-type', ''):
+    # Не трогать JSON с экрана «Справки» (/mybank/statements): там тоже «statements» в пути/реферере.
+    _ref = (flow.request.headers.get("referer") or "").lower()
+    _ul = url.lower()
+    _cert_spa = (
+        "/mybank/statements" in _ul
+        or "mybank%2fstatements" in _ul
+        or "/mybank/statements" in _ref
+        or "mybank%2fstatements" in _ref
+    )
+    if (
+        "statements" in _ul
+        and not _cert_spa
+        and 'application/json' in flow.response.headers.get('content-type', '')
+    ):
         try:
             data = json.loads(flow.response.text)
             if "payload" in data and isinstance(data["payload"], list):

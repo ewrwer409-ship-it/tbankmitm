@@ -73,3 +73,54 @@ def is_jsonish_response(flow) -> bool:
 
 def bank_debug_enabled() -> bool:
     return os.environ.get("BANK_DEBUG", "").strip() in ("1", "true", "yes", "on")
+
+
+def text_indicates_statements_spravki(
+    url: str = "", referer: str = "", request_body: str = ""
+) -> bool:
+    """
+    Экран «Справки» (/mybank/statements): путь в URL, Referer или строка в теле (GraphQL),
+    т.к. для api.* Referer часто обрезан до origin без /mybank/statements.
+    """
+    blob = f"{url or ''} {referer or ''} {request_body or ''}".lower()
+    if "/mybank/statements" in blob:
+        return True
+    if "mybank%2fstatements" in blob:
+        return True
+    if "mybank%252fstatements" in blob:
+        return True
+    return False
+
+
+def url_prohibit_proxy_json_mutation(url: str) -> bool:
+    """
+    Ответы, которые нельзя json.loads + патчить прокси-скриптами: ломается Tramvai / «Справки».
+
+    - /api/cfg/web-gateway/getResponse — огромное дерево микрофронтов; apply_hidden / inject
+      находили «кандидатов»-списки и портили JSON при has_operation_candidates.
+    - cx-evolution-api … documents — запросы справок (filter-new-document и т.д.).
+    """
+    u = (url or "").lower()
+    if "/api/cfg/web-gateway" in u:
+        return True
+    if "cx-evolution-api" in u and "document" in u:
+        return True
+    return False
+
+
+def flow_statements_spravki_context(flow) -> bool:
+    """То же, что text_indicates_statements_spravki, но из HTTPFlow (URL + Referer + тело запроса)."""
+    try:
+        req = flow.request
+        url = req.pretty_url or ""
+        ref = req.headers.get("Referer") or ""
+        if isinstance(ref, bytes):
+            ref = ref.decode("utf-8", "replace")
+        body = ""
+        try:
+            body = req.get_text(strict=False) or ""
+        except Exception:
+            pass
+        return text_indicates_statements_spravki(url, ref, body)
+    except Exception:
+        return False

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Прокси и панель на всех интерфейсах :8082 (iPhone + Potatso).
+# Цепочка mitm-скриптов = mitm_addon_chain.py (тот же набор, что start.bat через _proxy_cmd.bat).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -17,19 +18,7 @@ if [[ -z "${TBANKMITM_PUBLIC_IP:-}" ]]; then
 fi
 export TBANKMITM_PUBLIC_IP
 
-exec ./venv/bin/python mitm_run_dump.py \
-  -s transfer.py \
-  -s controller.py \
-  -s balance.py \
-  -s history.py \
-  -s operation_detail.py \
-  -s name.py \
-  -s reki.py \
-  -s panel_bridge.py \
-  -s browser_ops_injector.py \
-  -s tbank_sbp_debit_injector.py \
-  --listen-host 0.0.0.0 \
-  -p 8082 \
-  --set block_global=false \
-  --set ssl_insecure=true \
-  --set http2=false
+export TBANKMITM_PROXY_LISTEN_HOST=0.0.0.0
+export TBANKMITM_PROXY_PORT=8082
+
+exec ./venv/bin/python mitm_run_dump.py

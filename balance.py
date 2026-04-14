@@ -4,7 +4,14 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from bank_filter import is_bank_flow, ensure_response_decoded, bank_debug_enabled, is_jsonish_response
+from bank_filter import (
+    is_bank_flow,
+    ensure_response_decoded,
+    bank_debug_enabled,
+    is_jsonish_response,
+    flow_statements_spravki_context,
+    url_prohibit_proxy_json_mutation,
+)
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 
@@ -96,7 +103,13 @@ def response(flow: http.HTTPFlow) -> None:
 
     if not is_jsonish_response(flow):
         return
-    
+
+    if url_prohibit_proxy_json_mutation(url):
+        return
+
+    if flow_statements_spravki_context(flow):
+        return
+
     try:
         balance_cfg = get_config()
         TEST_DATA = {

@@ -13,7 +13,14 @@ from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import history
 import controller
-from bank_filter import is_bank_flow, ensure_response_decoded, bank_debug_enabled, is_jsonish_response
+from bank_filter import (
+    is_bank_flow,
+    ensure_response_decoded,
+    bank_debug_enabled,
+    is_jsonish_response,
+    flow_statements_spravki_context,
+    url_prohibit_proxy_json_mutation,
+)
 
 _UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}"
@@ -118,6 +125,8 @@ def _replace_time_refs_in_json(obj, replacement_time: int):
 
 def _url_suggests_detail_or_receipt(u: str) -> bool:
     u = (u or "").lower()
+    if "/mybank/statements" in u or "mybank%2fstatements" in u:
+        return False
     if any(b in u for b in ("histogram", "category_list", "graphql", "web-gateway", "log/collect")):
         return False
     hints = (
@@ -137,7 +146,11 @@ def _url_suggests_detail_or_receipt(u: str) -> bool:
         "sprav",
         "reference",
         "certificate",
-        "statement",
+        # не "statement" — совпадает с "statements" (Справки / API справок)
+        "/statement/",
+        "statement?",
+        "=statement",
+        "&statement",
         "movement",
         "registry",
     )
@@ -149,6 +162,11 @@ def request(flow: http.HTTPFlow) -> None:
     if not history.manual_operations:
         return
     if not is_bank_flow(flow):
+        return
+    _url0 = flow.request.pretty_url or ""
+    if url_prohibit_proxy_json_mutation(_url0):
+        return
+    if flow_statements_spravki_context(flow):
         return
     manual_ids = set(history.manual_operations.keys())
     ids_in_flow = _extract_ids_from_flow(flow)
@@ -593,6 +611,10 @@ def response(flow: http.HTTPFlow) -> None:
 
     manual_ids = set(history.manual_operations.keys())
     url = flow.request.pretty_url or ""
+    if url_prohibit_proxy_json_mutation(url):
+        return
+    if flow_statements_spravki_context(flow):
+        return
     ids_in_flow = _extract_ids_from_flow(flow)
     if not (manual_ids & ids_in_flow) and not _url_suggests_detail_or_receipt(url):
         return
