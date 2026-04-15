@@ -207,8 +207,7 @@ def _build_script() -> str:
     manual_actions_disallow_only = json.dumps(_action_buttons_disallow_only_inner_html(), ensure_ascii=False)
     panel_origin_js = json.dumps(_panel_fetch_origin(), ensure_ascii=False)
     try:
-        _restrict = not history.panel_include_all_cached_operations()
-        _di, _de, _, _ = history.calculate_stats(restrict_month=_restrict)
+        _di, _de, _, _ = history.get_panel_chart_display_totals()
         panel_totals_json = json.dumps(
             {"income": float(_di), "expense": float(_de)}, ensure_ascii=False
         )
@@ -1385,6 +1384,13 @@ def _build_script() -> str:
   function finTotalsForMybankHomeFromOperationsApi(d) {{
     const st = d && d.stats;
     if (!st) return null;
+    /* Как в панели: stats.income/expense = get_panel_chart_display_totals (ручные поля, гистограмма, моки).
+       list_* — только сумма по строкам ленты; на главной /mybank/ нужны те же цифры, что в блоке «Траты» панели. */
+    if (st.income != null && st.expense != null) {{
+      const pi = Number(st.income);
+      const pe = Number(st.expense);
+      if (isFinite(pi) && isFinite(pe)) return {{ income: pi, expense: pe }};
+    }}
     if (st.list_income != null && st.list_expense != null) {{
       const li = Number(st.list_income);
       const le = Number(st.list_expense);
