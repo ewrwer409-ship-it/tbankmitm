@@ -77,6 +77,10 @@ def record_bank_histogram_from_payload(data):
         _bank_histogram_expense = round(float(exp), 2)
     if inc is not None or exp is not None:
         print(f"[history] Сводка с сайта: доходы={_bank_histogram_income}, расходы={_bank_histogram_expense}")
+        try:
+            sync_manual_ie_panel_aggregate_into_config()
+        except Exception as e:
+            print(f"[history] sync_manual_ie_panel_aggregate_into_config: {e}")
 
 
 def get_bank_histogram_totals():
@@ -135,26 +139,17 @@ def get_panel_chart_display_totals():
 
 def sync_panel_income_expense_with_operations():
     """
-    После добавления/изменения/удаления ручной или мок‑операции: убрать зафиксированные
-    в config.manual суммы доход/расход и включить синхронизацию с операциями.
-    Тогда панель и подмена гистограмм (panel_bridge) подхватывают новые суммы автоматически.
+    После добавления/изменения/удаления ручной или мок‑операции: пересчитать
+    config.manual.income/expense = сводка банка + ручные/моки (см. sync_manual_ie_panel_aggregate_into_config).
     """
     try:
         manual = controller.config.setdefault("manual", {})
-        changed = False
-        if "income" in manual:
-            manual.pop("income", None)
-            changed = True
-        if "expense" in manual:
-            manual.pop("expense", None)
-            changed = True
         if manual.get("histogram_sync_with_operations") is False:
             manual["histogram_sync_with_operations"] = True
-            changed = True
-        if changed:
             controller.save_config()
-            di, de, _, _ = get_panel_chart_display_totals()
-            print(f"[history] Статистика синхронизирована с операциями: доходы={di} ₽, расходы={de} ₽")
+        sync_manual_ie_panel_aggregate_into_config()
+        di, de, _, _ = get_panel_chart_display_totals()
+        print(f"[history] Панель доход/расход синхронизирована: доходы={di} ₽, расходы={de} ₽")
     except Exception as e:
         print(f"[history] sync_panel_income_expense_with_operations: {e}")
 
@@ -384,6 +379,10 @@ def save_manual_operations():
         with open(MANUAL_OPS_FILE, "w", encoding="utf-8") as f:
             json.dump(manual_operations, f, ensure_ascii=False, indent=2)
         _manual_ops_mtime = os.path.getmtime(MANUAL_OPS_FILE)
+        try:
+            sync_manual_ie_panel_aggregate_into_config()
+        except Exception as e:
+            print(f"[history] sync_manual_ie после save_manual_operations: {e}")
     except Exception as e:
         print(f"[history] Ошибка сохранения manual_operations: {e}")
 
@@ -395,6 +394,10 @@ def ensure_manual_operations_fresh():
         current_mtime = None
     if current_mtime != _manual_ops_mtime:
         load_manual_operations()
+        try:
+            sync_manual_ie_panel_aggregate_into_config()
+        except Exception:
+            pass
 
 load_manual_operations()
 
@@ -2530,6 +2533,47 @@ def calculate_stats(restrict_month: bool = True):
     return round(income, 2), expense, inc_cnt, exp_cnt
 
 
+def sync_manual_ie_panel_aggregate_into_config() -> bool:
+    """
+    Записать в config.manual.income / expense сумму: сводка банка из последней гистограммы
+    + ручные операции (manual_operations.json) + мок‑переводы (как в get_panel_chart_display_totals).
+    Тогда панель «траты/доходы» совпадает с подменой на сайте без ручного ввода.
+    """
+    ensure_manual_operations_fresh()
+    manual = controller.config.setdefault("manual", {})
+    if not manual.get("histogram_sync_with_operations", True):
+        return False
+    if manual.get("manual_ie_panel_aggregate", True) is False:
+        return False
+    b_inc, b_exp = get_bank_histogram_totals()
+    man_inc_m, man_exp_m = _manual_operations_income_expense_month(restrict_month=True)
+    fake_inc_m = _fake_credit_month_total()
+    transfer_exp_addon = _panel_transfer_expense_addon()
+    restrict = not panel_include_all_cached_operations()
+
+    if b_exp is not None:
+        exp_val = round(float(b_exp) + float(transfer_exp_addon or 0) + float(man_exp_m or 0), 2)
+    else:
+        _, exp_val, _, _ = calculate_stats(restrict_month=restrict)
+
+    if b_inc is not None:
+        inc_val = round(float(b_inc) + float(man_inc_m or 0) + float(fake_inc_m or 0), 2)
+    else:
+        inc_val, _, _, _ = calculate_stats(restrict_month=restrict)
+
+    changed = False
+    if manual.get("expense") != exp_val:
+        manual["expense"] = exp_val
+        changed = True
+    if manual.get("income") != inc_val:
+        manual["income"] = inc_val
+        changed = True
+    if changed:
+        controller.save_config()
+        print(f"[history] Панель доход/расход: доходы={inc_val} ₽, расходы={exp_val} ₽ (сводка банка + ручн./моки)")
+    return changed
+
+
 def compute_manual_balance_adjustment() -> float:
     """Поправка баланса за текущий месяц: доходы ручных минус расходы (скрытые не считаем)."""
     ensure_manual_operations_fresh()
@@ -2622,6 +2666,10 @@ def build_operations_api_response():
     month_ops.extend(_fake_transfer_ops_for_panel(skip_fake, month_only=not show_all))
     month_ops.sort(key=lambda x: (x.get("sort_ts", 0), 1 if x.get("manual") else 0), reverse=True)
     display_income, display_expense, real_inc_cnt, real_exp_cnt = get_panel_chart_display_totals()
+    # Суммы по тем же операциям, что в ленте /mybank/operations/ (без привязки к полям «доход/расход» в панели).
+    list_income, list_expense, list_inc_cnt, list_exp_cnt = calculate_stats(restrict_month=not show_all)
+    # Главная mybank: как сумма по операциям в кэше (как на /operations), не «сводка банка» (часто = одна ручная 10 000 ₽).
+    home_inc, home_exp = list_income, list_expense
     return {
         "operations": month_ops,
         "hidden": list(hidden_operations),
@@ -2630,6 +2678,12 @@ def build_operations_api_response():
             "expense": display_expense,
             "income_count": real_inc_cnt,
             "expense_count": real_exp_cnt,
+            "list_income": list_income,
+            "list_expense": list_expense,
+            "list_income_count": list_inc_cnt,
+            "list_expense_count": list_exp_cnt,
+            "home_mybank_income": home_inc,
+            "home_mybank_expense": home_exp,
         },
         "last_sync": last_sync_time.strftime("%d.%m.%Y %H:%M:%S") if last_sync_time else None,
     }

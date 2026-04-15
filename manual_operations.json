@@ -1,46 +1,46 @@
 {
-  "m_ddaba087d29b": {
-    "id": "m_ddaba087d29b",
-    "date": "13.04.2026, 18:41:00",
+  "m_3148a1571bf8": {
+    "id": "m_3148a1571bf8",
+    "date": "15.04.2026, 19:18:00",
     "amount": 10000.0,
     "type": "Debit",
     "description": "",
-    "bank": "МТС Банк",
-    "title": "ОООЛ",
-    "subtitle": "",
-    "sender_name": "",
-    "requisite_sender_name": "",
-    "phone": "+79274457010",
-    "requisite_phone": "+79274457010",
-    "receipt_phone": "",
-    "card_number": "",
-    "bank_preset": "mts",
-    "operationTime": {
-      "milliseconds": 1776094860000,
-      "seconds": 1776094860.0
-    },
-    "pdf_path": "receipt_m_ddaba087d2_20260415_183922.pdf"
-  },
-  "m_17159417a75b": {
-    "id": "m_17159417a75b",
-    "date": "15.04.2026, 18:45:19",
-    "amount": 19999.99,
-    "type": "Debit",
-    "description": "",
-    "bank": "Сбербанк",
-    "title": "ЛЛЛ",
+    "bank": "WB Банк",
+    "title": "Рвлв",
     "subtitle": "Переводы",
     "sender_name": "",
     "requisite_sender_name": "",
-    "phone": "+79274450202",
-    "requisite_phone": "+79274450202",
+    "phone": "+79274452020",
+    "requisite_phone": "+79274452020",
     "receipt_phone": "",
     "card_number": "",
-    "bank_preset": "sber",
+    "bank_preset": "sovcom",
     "operationTime": {
-      "milliseconds": 1776267919365,
-      "seconds": 1776267919.365
+      "milliseconds": 1776269880000,
+      "seconds": 1776269880.0
     },
-    "pdf_path": "receipt_m_17159417a7_20260415_184519.pdf"
+    "pdf_path": "receipt_m_3148a1571b_20260415_191844.pdf"
+  },
+  "m_115481a3747d": {
+    "id": "m_115481a3747d",
+    "date": "15.04.2026, 21:29:05",
+    "amount": 2000.0,
+    "type": "Debit",
+    "description": "",
+    "bank": "ПСБ",
+    "title": "ОПлоа",
+    "subtitle": "Переводы",
+    "sender_name": "",
+    "requisite_sender_name": "",
+    "phone": "+79274452424",
+    "requisite_phone": "+79274452424",
+    "receipt_phone": "",
+    "card_number": "",
+    "bank_preset": "yandex",
+    "operationTime": {
+      "milliseconds": 1776277745346,
+      "seconds": 1776277745.346
+    },
+    "pdf_path": "receipt_m_115481a374_20260415_212905.pdf"
   }
 }

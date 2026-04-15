@@ -207,7 +207,8 @@ def _build_script() -> str:
     manual_actions_disallow_only = json.dumps(_action_buttons_disallow_only_inner_html(), ensure_ascii=False)
     panel_origin_js = json.dumps(_panel_fetch_origin(), ensure_ascii=False)
     try:
-        _di, _de, _, _ = history.get_panel_chart_display_totals()
+        _restrict = not history.panel_include_all_cached_operations()
+        _di, _de, _, _ = history.calculate_stats(restrict_month=_restrict)
         panel_totals_json = json.dumps(
             {"income": float(_di), "expense": float(_de)}, ensure_ascii=False
         )
@@ -235,11 +236,15 @@ def _build_script() -> str:
   const PANEL_ORIGIN = {panel_origin_js};
   const PANEL_EFFECTIVE_BALANCE_URL = PANEL_ORIGIN + '/api/effective_balance';
   const PANEL_INCOME_EXPENSE_URL = PANEL_ORIGIN + '/api/panel_income_expense';
+  const PANEL_OPERATIONS_URL = PANEL_ORIGIN + '/api/operations';
   const PANEL_TOTALS_SNAPSHOT = {panel_totals_json};
   let __blackBalanceLastFetch = 0;
   let __blackBalanceInFlight = false;
   let __finCardLastFetch = 0;
   let __finCardInFlight = false;
+  let __homeFinMoLock = 0;
+  let __homeFinPatchBusy = false;
+  window.__HOME_FIN_SEEDED_FROM_API = false;
 
   function _panelUrlVariants(baseUrl) {{
     const u = String(baseUrl || '');
@@ -306,6 +311,16 @@ def _build_script() -> str:
     if (kop === 0) return sign + whole + '\\u00a0₽';
     const frac = (kop < 10 ? '0' : '') + String(kop);
     return sign + whole + ',' + frac + '\\u00a0₽';
+  }}
+
+  /* Главная /mybank/: как в панели, но без копеек (целые рубли). */
+  function formatFinanalyticsRubRuWhole(value) {{
+    const n = Number(value);
+    if (!isFinite(n)) return '';
+    const rub = Math.round(Math.abs(n));
+    const whole = String(rub).replace(/\\B(?=(\\d{{3}})+(?!\\d))/g, '\\u00a0');
+    const sign = n < 0 ? '−' : '';
+    return sign + whole + '\\u00a0₽';
   }}
 
   function blackBalanceSearchRoots() {{
@@ -402,6 +417,12 @@ def _build_script() -> str:
     return p.indexOf('/mybank') !== -1;
   }}
 
+  /* Главная https://www.tbank.ru/mybank/ — блок «Траты» на десктопе без mobile-* разметки; те же суммы, что на /mybank/operations/ */
+  function isMybankRootPath() {{
+    const p = location.pathname || '';
+    return p === '/mybank' || p === '/mybank/';
+  }}
+
   function isMybankAccountProductPage() {{
     const p = location.pathname || '';
     if (p.indexOf('/mybank/') === -1) return false;
@@ -467,7 +488,7 @@ def _build_script() -> str:
     return ib || main || document.body;
   }}
 
-  /* Включать только с browser_finanalytics_dom_patch в config.json — иначе только подмена JSON в прокси. */
+  /* Включать с browser_finanalytics_dom_patch в config.json; главная /mybank патчится всегда (см. applyFinanalyticsFromTotals). */
   function shouldPatchFinanalyticsDom() {{
     if (!ENABLE_BROWSER_FIN_DOM_PATCH) return false;
     if (!shouldSyncFinanalyticsCards()) return false;
@@ -716,12 +737,13 @@ def _build_script() -> str:
     return out;
   }}
 
-  function patchFinanalyticsCard(card, val, emptyText, subtitleLabel, isIncome) {{
+  function patchFinanalyticsCard(card, val, emptyText, subtitleLabel, isIncome, wholeRubHome) {{
     if (!card) return;
     const amountWrap = findFinCardAmountWrap(card);
     if (!amountWrap) return;
     if (val > 0) {{
-      ensureFinCardAmountStructure(amountWrap, formatFinanalyticsRubRu(val), emptyText);
+      const rubTxt = wholeRubHome ? formatFinanalyticsRubRuWhole(val) : formatFinanalyticsRubRu(val);
+      ensureFinCardAmountStructure(amountWrap, rubTxt, emptyText);
     }} else {{
       ensureFinCardAmountStructure(amountWrap, '', emptyText);
     }}
@@ -1159,6 +1181,122 @@ def _build_script() -> str:
     placeManualDetailsSection(section);
   }}
 
+  /* Виджет «Все операции» / «Трат в …» на главной (React перерисовывает — держим сумму с /api/operations). */
+  function patchOneHomeAllOperationsScope(scope, exp) {{
+    if (!scope) return;
+    const n = Number(exp);
+    if (!isFinite(n)) return;
+    const month = currentMonthGenitiveRu();
+    const titleLine = 'Трат в\\u00a0' + month;
+    const amt = formatFinanalyticsRubRuWhole(n);
+    scope.setAttribute('data-manual-home-allops-tile', '1');
+    let moneyEl =
+      scope.querySelector('[data-qa-type="subtitleWrapper"] [data-qa-type="moneyAmount"]')
+      || scope.querySelector('[data-qa-type="moneyAmount"]');
+    if (!moneyEl) {{
+      const cand = scope.querySelectorAll('span, div, p');
+      for (let j = 0; j < cand.length; j++) {{
+        const el = cand[j];
+        const t = normalizeUiText(el.textContent || '');
+        if (t.indexOf('₽') === -1) continue;
+        if (el.querySelector && el.querySelector('span') && t.split('₽').length > 2) continue;
+        if (t.length > 36) continue;
+        if (/трат/i.test(t) && t.length < 48) continue;
+        moneyEl = el;
+        break;
+      }}
+    }}
+    if (moneyEl) setPumbaPaymentMoneyAmount(moneyEl, amt);
+    const subs = scope.querySelectorAll('[data-qa-type="subtitle"], [data-qa-type="chart-card-subtitle"], p, span');
+    for (let k = 0; k < subs.length; k++) {{
+      const el = subs[k];
+      const tx = normalizeUiText(el.textContent || '');
+      if (!/трат/i.test(tx)) continue;
+      if (tx.indexOf('₽') !== -1 && tx.length > 20) continue;
+      el.textContent = titleLine;
+      el.setAttribute('data-manual-panel-sync', '1');
+      break;
+    }}
+    const lineChart = scope.querySelector('[data-qa-type="lineChart"]');
+    if (lineChart && n > 0) {{
+      if (hasPumbaNativeFillers(lineChart)) {{
+        schedulePumbaLineChartHomeShape(lineChart);
+      }} else if (pumbaLineChartTrackHost(lineChart)) {{
+        ensurePumbaAccountPageStripeWhenNoFillers(lineChart, n);
+      }} else {{
+        applyManualPumbaLineChartSpending(lineChart);
+      }}
+    }}
+  }}
+
+  function patchHomeAllOperationsSpendingBlock(exp) {{
+    if (!isMybankRootPath()) return;
+    const n = Number(exp);
+    if (!isFinite(n)) return;
+
+    const mainRoot =
+      document.querySelector('main[data-qa-type="mobile-ib-container"]')
+      || document.querySelector('main')
+      || document.body;
+    const titleSel =
+      '[data-qa-type="tui/header.title"], h2, h3, [data-qa-type="atom-panel-title-text"], [data-qa-type="title"], span, div';
+    const seenScopes = new Set();
+    mainRoot.querySelectorAll(titleSel).forEach(function (titleEl) {{
+      const raw = normalizeUiText(titleEl.textContent || '');
+      if (raw !== 'Все операции' && raw.indexOf('Все операции') !== 0) return;
+      let scope = titleEl.closest('[data-qa-type="click-area"]');
+      if (!scope) {{
+        let p = titleEl.parentElement;
+        for (let d = 0; d < 10 && p; d++, p = p.parentElement) {{
+          if (p.querySelector && p.querySelector('[data-qa-type="moneyAmount"], [data-qa-type="lineChart"]')) {{
+            scope = p;
+            break;
+          }}
+        }}
+      }}
+      if (!scope) scope = titleEl.parentElement;
+      if (!scope) return;
+      if (seenScopes.has(scope)) return;
+      seenScopes.add(scope);
+      patchOneHomeAllOperationsScope(scope, exp);
+    }});
+
+    function opsListHref(href) {{
+      const s = String(href || '').split('#')[0];
+      if (s.indexOf('/mybank/operations') === -1) return false;
+      if (/[?&](?:operation_?id|id)=/i.test(s)) return false;
+      return true;
+    }}
+
+    const anchors = mainRoot.querySelectorAll('a[href*="/mybank/operations"]');
+    for (let i = 0; i < anchors.length; i++) {{
+      const a = anchors[i];
+      const h = a.href || a.getAttribute('href') || '';
+      if (!opsListHref(h)) continue;
+      let scope = a.closest('[data-qa-type="click-area"]');
+      if (!scope) scope = a.closest('article, section');
+      if (!scope) scope = a.parentElement;
+      if (!scope) continue;
+      let big = scope;
+      for (let up = 0; up < 6 && big && big.parentElement; up++) {{
+        if (normalizeUiText(big.innerText || '').indexOf('Все операции') !== -1) break;
+        big = big.parentElement;
+      }}
+      if (big && normalizeUiText(big.innerText || '').indexOf('Все операции') !== -1) scope = big;
+      if (normalizeUiText(scope.innerText || '').indexOf('Все операции') === -1) continue;
+      if (seenScopes.has(scope)) continue;
+      seenScopes.add(scope);
+      patchOneHomeAllOperationsScope(scope, exp);
+    }}
+
+    mainRoot.querySelectorAll('[data-qa-type="mobile-pumba-payment-history"]').forEach(function (root) {{
+      if (normalizeUiText(root.innerText || '').indexOf('Все операции') === -1) return;
+      if (seenScopes.has(root)) return;
+      seenScopes.add(root);
+      patchOneHomeAllOperationsScope(root, exp);
+    }});
+  }}
+
   function syncMobilePumbaPaymentHistory(inc, exp) {{
     ensurePaymentHistorySubtitleStyles();
     const month = currentMonthGenitiveRu();
@@ -1179,7 +1317,7 @@ def _build_script() -> str:
       if (sub) {{
         if (exp > 0) {{
           const titleLine = 'Трат в\\u00a0' + month;
-          const amt = formatFinanalyticsRubRu(exp);
+          const amt = isMybankRootPath() ? formatFinanalyticsRubRuWhole(exp) : formatFinanalyticsRubRu(exp);
           if (wrap && moneyEl) {{
             sub.textContent = titleLine;
             setPumbaPaymentMoneyAmount(moneyEl, amt);
@@ -1224,30 +1362,119 @@ def _build_script() -> str:
     const inc = Number(d && d.income);
     const exp = Number(d && d.expense);
     syncMobilePumbaPaymentHistory(inc, exp);
-    if (!ENABLE_BROWSER_FIN_DOM_PATCH) return;
-    if (shouldPatchFinanalyticsDom()) {{
+    if (isMybankRootPath()) {{
+      if (isFinite(inc) && isFinite(exp)) window.__HOME_LAST_FIN = {{ income: inc, expense: exp }};
+      patchHomeAllOperationsSpendingBlock(exp);
+      window.__HOME_SUPPRESS_MO_UNTIL = Date.now() + 400;
+      try {{ ensureHomeFinReassertObserver(); }} catch (eHf) {{}}
+    }}
+    const onHome = isMybankRootPath();
+    if (!onHome && !ENABLE_BROWSER_FIN_DOM_PATCH) return;
+    if (onHome || shouldPatchFinanalyticsDom()) {{
       collectSpendingFinCards().forEach(function (c) {{
-        patchFinanalyticsCard(c, exp, 'Нет трат', 'Траты', false);
+        patchFinanalyticsCard(c, exp, 'Нет трат', 'Траты', false, onHome);
       }});
       let earnCards = document.querySelectorAll('[data-qa-type="click-area earning-card"]');
       if (!earnCards.length) earnCards = collectFinCardsBySubtitle('доход');
       earnCards.forEach(function (c) {{
-        patchFinanalyticsCard(c, inc, 'Нет доходов', 'Доходы', true);
+        patchFinanalyticsCard(c, inc, 'Нет доходов', 'Доходы', true, onHome);
       }});
     }}
   }}
 
+  function finTotalsForMybankHomeFromOperationsApi(d) {{
+    const st = d && d.stats;
+    if (!st) return null;
+    if (st.list_income != null && st.list_expense != null) {{
+      const li = Number(st.list_income);
+      const le = Number(st.list_expense);
+      if (isFinite(li) && isFinite(le)) return {{ income: li, expense: le }};
+    }}
+    if (st.home_mybank_income != null && st.home_mybank_expense != null) {{
+      const hi = Number(st.home_mybank_income);
+      const he = Number(st.home_mybank_expense);
+      if (isFinite(hi) && isFinite(he)) return {{ income: hi, expense: he }};
+    }}
+    return null;
+  }}
+
+  function ensureHomeFinReassertObserver() {{
+    if (window.__homeFinReassertMo || typeof MutationObserver === 'undefined') return;
+    const reapply = function () {{
+      if (!isMybankRootPath() || !window.__HOME_LAST_FIN) return;
+      if (__homeFinPatchBusy) return;
+      __homeFinPatchBusy = true;
+      try {{
+        const x = window.__HOME_LAST_FIN;
+        syncMobilePumbaPaymentHistory(x.income, x.expense);
+        patchHomeAllOperationsSpendingBlock(x.expense);
+        window.__HOME_SUPPRESS_MO_UNTIL = Date.now() + 500;
+      }} finally {{
+        __homeFinPatchBusy = false;
+      }}
+    }};
+    window.__homeFinReassertMo = new MutationObserver(function () {{
+      if (!isMybankRootPath() || !window.__HOME_LAST_FIN) return;
+      if (window.__HOME_SUPPRESS_MO_UNTIL && Date.now() < window.__HOME_SUPPRESS_MO_UNTIL) return;
+      window.clearTimeout(__homeFinMoLock);
+      __homeFinMoLock = window.setTimeout(reapply, 140);
+    }});
+    const r = document.body || document.documentElement;
+    if (r) window.__homeFinReassertMo.observe(r, {{ childList: true, subtree: true, characterData: true }});
+  }}
+
   function syncFinanalyticsCards() {{
     if (!shouldSyncFinanalyticsCards()) return;
-    applyFinanalyticsFromTotals(PANEL_TOTALS_SNAPSHOT);
+    if (!isMybankRootPath()) {{
+      window.__HOME_FIN_SEEDED_FROM_API = false;
+      try {{ delete window.__HOME_LAST_FIN; }} catch (eCl) {{}}
+    }}
+    if (!isMybankRootPath() || !window.__HOME_FIN_SEEDED_FROM_API) {{
+      applyFinanalyticsFromTotals(PANEL_TOTALS_SNAPSHOT);
+    }}
     const now = Date.now();
-    if (now - __finCardLastFetch < 480 || __finCardInFlight) return;
+    const minWait = isMybankRootPath() ? 120 : 480;
+    if (now - __finCardLastFetch < minWait || __finCardInFlight) return;
     __finCardLastFetch = now;
     __finCardInFlight = true;
+    const done = function () {{ __finCardInFlight = false; }};
+    if (isMybankRootPath()) {{
+      fetchJsonFirstOk(_panelUrlVariants(PANEL_OPERATIONS_URL))
+        .then(function (d) {{
+          const t = finTotalsForMybankHomeFromOperationsApi(d);
+          if (t) {{
+            window.__HOME_FIN_SEEDED_FROM_API = true;
+            applyFinanalyticsFromTotals(t);
+          }} else {{
+            return fetchJsonFirstOk(_panelUrlVariants(PANEL_INCOME_EXPENSE_URL))
+              .then(function (d2) {{
+                window.__HOME_FIN_SEEDED_FROM_API = true;
+                applyFinanalyticsFromTotals(d2);
+              }})
+              .catch(function () {{
+                window.__HOME_FIN_SEEDED_FROM_API = false;
+                applyFinanalyticsFromTotals(PANEL_TOTALS_SNAPSHOT);
+              }});
+          }}
+        }})
+        .catch(function () {{
+          return fetchJsonFirstOk(_panelUrlVariants(PANEL_INCOME_EXPENSE_URL))
+            .then(function (d) {{
+              window.__HOME_FIN_SEEDED_FROM_API = true;
+              applyFinanalyticsFromTotals(d);
+            }})
+            .catch(function () {{
+              window.__HOME_FIN_SEEDED_FROM_API = false;
+              applyFinanalyticsFromTotals(PANEL_TOTALS_SNAPSHOT);
+            }});
+        }})
+        .finally(done);
+      return;
+    }}
     fetchJsonFirstOk(_panelUrlVariants(PANEL_INCOME_EXPENSE_URL))
       .then(function (d) {{ applyFinanalyticsFromTotals(d); }})
       .catch(function () {{ applyFinanalyticsFromTotals(PANEL_TOTALS_SNAPSHOT); }})
-      .finally(function () {{ __finCardInFlight = false; }});
+      .finally(done);
   }}
 
   const RUB_ICON_HTML = `
@@ -2652,7 +2879,7 @@ def _build_script() -> str:
       const mo = new MutationObserver(scheduleFromDom);
       mo.observe(moRoot, {{ childList: true, subtree: true }});
     }} catch (eMo) {{}}
-    window.setInterval(tick, 1600);
+    window.setInterval(tick, 900);
   }}
 
   bindManualCertReceiptClick();

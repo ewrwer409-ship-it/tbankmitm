@@ -25,7 +25,7 @@
     "beneficiary": "Перевод средств по договору № 5456920 Кузнецова Ирина Владимировна НДС не облагается"
   },
   "balance": {
-    "new_balance": 10000000,
+    "new_balance": 10000000.22,
     "new_card_number": "6800******2733",
     "new_collect_sum": 24925,
     "new_card_number2": "6181******8690"
@@ -41,6 +41,8 @@
   },
   "browser_finanalytics_dom_patch": false,
   "manual": {
-    "histogram_sync_with_operations": true
+    "histogram_sync_with_operations": true,
+    "expense": 15857.83,
+    "income": 40068.88
   }
 }
