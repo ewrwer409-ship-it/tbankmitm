@@ -229,21 +229,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             bank_preset = (data.get("bank_preset") or "custom").strip().lower() or "custom"
             op_type = "Debit" if direction == "out" else "Credit"
             
-            dt_raw = data.get("datetime")
-            if dt_raw:
-                try:
-                    s = str(dt_raw).strip().replace("Z", "")
-                    if "+" in s:
-                        s = s.split("+", 1)[0]
-                    dt = datetime.fromisoformat(s)
-                    date_str = dt.strftime("%d.%m.%Y, %H:%M:%S")
-                    ms = int(dt.timestamp() * 1000)
-                except:
-                    date_str = datetime.now().strftime("%d.%m.%Y, %H:%M:%S")
-                    ms = int(datetime.now().timestamp() * 1000)
-            else:
-                date_str = datetime.now().strftime("%d.%m.%Y, %H:%M:%S")
-                ms = int(datetime.now().timestamp() * 1000)
+            date_str, ms = history.parse_panel_datetime_iso(data.get("datetime"))
             
             op_id = "m_" + uuid.uuid4().hex[:12]
             
@@ -287,6 +273,7 @@ class PanelHandler(BaseHTTPRequestHandler):
                 except Exception as e:
                     print(f"[panel_server] Ошибка чека: {e}")
             
+            history.sync_panel_income_expense_with_operations()
             self.send_json({"status": "ok", "id": op_id, "receipt_path": receipt_path})
             print(f"[panel_server] Добавлена операция {op_id}")
         except Exception as e:
@@ -301,8 +288,10 @@ class PanelHandler(BaseHTTPRequestHandler):
                 del history.manual_operations[op_id]
                 history.hidden_operations.discard(op_id)
                 history.save_manual_operations()
+                history.sync_panel_income_expense_with_operations()
                 self.send_json({"status": "ok"})
             elif history.remove_fake_transfer_operation(op_id):
+                history.sync_panel_income_expense_with_operations()
                 self.send_json({"status": "ok"})
             else:
                 self.send_error_json(404, "Не найдена")
@@ -336,16 +325,12 @@ class PanelHandler(BaseHTTPRequestHandler):
                 if isinstance(rec.get("counterparty"), dict):
                     rec["counterparty"]["logo"] = rec["logo"]
             if data.get("datetime"):
-                try:
-                    s = str(data["datetime"]).strip().replace("Z", "")
-                    if "+" in s:
-                        s = s.split("+", 1)[0]
-                    dt = datetime.fromisoformat(s)
-                    rec["date"] = dt.strftime("%d.%m.%Y, %H:%M:%S")
-                except:
-                    pass
+                dstr, op_ms = history.parse_panel_datetime_iso(data["datetime"])
+                rec["date"] = dstr
+                rec["operationTime"] = {"milliseconds": op_ms, "seconds": op_ms / 1000.0}
             
             history.save_manual_operations()
+            history.sync_panel_income_expense_with_operations()
             self.send_json({"status": "ok", "id": op_id})
         except Exception as e:
             self.send_error_json(400, str(e))

@@ -224,26 +224,9 @@ class PanelHandler(BaseHTTPRequestHandler):
             card_number = (data.get("card_number") or "").strip()
             op_type = "Debit" if direction == "out" else "Credit"
 
-            dt_raw = data.get("datetime")
-            if dt_raw:
-                try:
-                    s = str(dt_raw).strip().replace("Z", "")
-                    if "+" in s:
-                        s = s.split("+", 1)[0]
-                    dt = datetime.fromisoformat(s)
-                    date_str = dt.strftime("%d.%m.%Y, %H:%M:%S")
-                    ms = int(dt.timestamp() * 1000)
-                except:
-                    date_str = datetime.now().strftime("%d.%m.%Y, %H:%M:%S")
-                    ms = int(datetime.now().timestamp() * 1000)
-            else:
-                date_str = datetime.now().strftime("%d.%m.%Y, %H:%M:%S")
-                ms = int(datetime.now().timestamp() * 1000)
+            date_str, ms = history.parse_panel_datetime_iso(data.get("datetime"))
 
             op_id = "m_" + uuid.uuid4().hex[:12]
-
-            # Время на 15 секунд в будущем для отображения в начале списка
-            future_ms = ms + 15000
 
             history.manual_operations[op_id] = {
                 "id": op_id,
@@ -260,7 +243,7 @@ class PanelHandler(BaseHTTPRequestHandler):
                 "requisite_phone": requisite_phone,
                 "card_number": card_number,
                 "bank_preset": bank_preset,
-                "operationTime": {"milliseconds": future_ms, "seconds": future_ms / 1000},
+                "operationTime": {"milliseconds": ms, "seconds": ms / 1000.0},
                 # Правильная категория для переводов
                 "category": {"name": "Переводы", "id": "transfers"},
                 "merchant": {
@@ -302,6 +285,7 @@ class PanelHandler(BaseHTTPRequestHandler):
                 except Exception as e:
                     print(f"[run.py] Ошибка генерации чека: {e}")
 
+            history.sync_panel_income_expense_with_operations()
             self.send_json({"status": "ok", "id": op_id, "receipt_path": receipt_path})
             print(f"[run.py] Добавлена операция {op_id} ({op_type}, {amount})")
         except Exception as e:
@@ -316,9 +300,11 @@ class PanelHandler(BaseHTTPRequestHandler):
                 del history.manual_operations[op_id]
                 history.hidden_operations.discard(op_id)
                 history.save_manual_operations()
+                history.sync_panel_income_expense_with_operations()
                 self.send_json({"status": "ok"})
                 print(f"[run.py] Удалена операция {op_id}")
             elif history.remove_fake_transfer_operation(op_id):
+                history.sync_panel_income_expense_with_operations()
                 self.send_json({"status": "ok"})
                 print(f"[run.py] Удалён мок‑перевод {op_id}")
             else:
@@ -344,16 +330,12 @@ class PanelHandler(BaseHTTPRequestHandler):
                 if k in data:
                     rec[k] = (data.get(k) or "").strip() if isinstance(data.get(k), str) else data.get(k)
             if data.get("datetime"):
-                try:
-                    s = str(data["datetime"]).strip().replace("Z", "")
-                    if "+" in s:
-                        s = s.split("+", 1)[0]
-                    dt = datetime.fromisoformat(s)
-                    rec["date"] = dt.strftime("%d.%m.%Y, %H:%M:%S")
-                except:
-                    pass
+                dstr, op_ms = history.parse_panel_datetime_iso(data["datetime"])
+                rec["date"] = dstr
+                rec["operationTime"] = {"milliseconds": op_ms, "seconds": op_ms / 1000.0}
             
             history.save_manual_operations()
+            history.sync_panel_income_expense_with_operations()
             self.send_json({"status": "ok", "id": op_id})
             print(f"[run.py] Обновлена операция {op_id}")
         except Exception as e:
@@ -515,8 +497,8 @@ if __name__ == "__main__":
     print(f"=" * 60)
     history.ensure_manual_operations_fresh()
     print(f"Загружено операций: {len(history.manual_operations)}")
-    income, expense, inc, exp = history.calculate_stats()
-    print(f"Статистика за месяц: доходы={income}, расходы={expense}")
+    income, expense, inc, exp = history.calculate_manual_and_mock_transfer_stats()
+    print(f"Ручные+мок (месяц): доходы={income}, расходы={expense}, оп. {inc}/{exp}")
     print(f"=" * 60)
     try:
         server.serve_forever()

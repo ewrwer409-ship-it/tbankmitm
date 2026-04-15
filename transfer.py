@@ -994,6 +994,7 @@ def request(flow: http.HTTPFlow) -> None:
                 print(f"[transfer] конфиг: баланс −{amount} ₽; расход в fake_history (без дубля в total_out_rub)")
             else:
                 print(f"[transfer] конфиг: баланс −{amount} ₽; total_out_rub={tr['total_out_rub']} ₽")
+            history_mod.sync_panel_income_expense_with_operations()
         except Exception as ex:
             print(f"[transfer] не удалось обновить balance/transfers в config: {ex}")
 

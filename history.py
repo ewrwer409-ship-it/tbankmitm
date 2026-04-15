@@ -90,14 +90,15 @@ def panel_include_all_cached_operations() -> bool:
 
 def get_panel_chart_display_totals():
     """Единые доход/расход для панели и подмены гистограмм: если в config.manual заданы income/expense — они главные;
-    иначе при histogram_sync_with_operations: сводка банка или сумма по операциям; при выкл. синхронизации — manual или real."""
+    иначе при histogram_sync_with_operations: сводка банка + только ручные/мок‑переводы; без кэша реальных операций."""
     restrict_month = not panel_include_all_cached_operations()
-    real_inc, real_exp, inc_cnt, exp_cnt = calculate_stats(restrict_month=restrict_month)
+    real_inc, real_exp, inc_cnt, exp_cnt = calculate_manual_and_mock_transfer_stats(restrict_month=restrict_month)
     manual = controller.config.get("manual") or {}
     b_inc, b_exp = get_bank_histogram_totals()
     transfer_exp_addon = _panel_transfer_expense_addon()
     # Доп. к сводке банка только за текущий месяц (как у гистограммы /mybank).
     man_inc_m, man_exp_m = _manual_operations_income_expense_month(restrict_month=True)
+    fake_inc_m = _fake_credit_month_total()
 
     def pick(mkey, bank_v, real_v):
         sync_ops = manual.get("histogram_sync_with_operations", True)
@@ -119,7 +120,7 @@ def get_panel_chart_display_totals():
                         v = round(v + transfer_exp_addon, 2)
                     v = round(v + man_exp_m, 2)
                 elif mkey == "income":
-                    v = round(v + man_inc_m, 2)
+                    v = round(v + man_inc_m + fake_inc_m, 2)
                 return v
             return round(float(real_v), 2)
         try:
@@ -130,6 +131,33 @@ def get_panel_chart_display_totals():
     di = pick("income", b_inc, real_inc)
     de = pick("expense", b_exp, real_exp)
     return di, de, inc_cnt, exp_cnt
+
+
+def sync_panel_income_expense_with_operations():
+    """
+    После добавления/изменения/удаления ручной или мок‑операции: убрать зафиксированные
+    в config.manual суммы доход/расход и включить синхронизацию с операциями.
+    Тогда панель и подмена гистограмм (panel_bridge) подхватывают новые суммы автоматически.
+    """
+    try:
+        manual = controller.config.setdefault("manual", {})
+        changed = False
+        if "income" in manual:
+            manual.pop("income", None)
+            changed = True
+        if "expense" in manual:
+            manual.pop("expense", None)
+            changed = True
+        if manual.get("histogram_sync_with_operations") is False:
+            manual["histogram_sync_with_operations"] = True
+            changed = True
+        if changed:
+            controller.save_config()
+            di, de, _, _ = get_panel_chart_display_totals()
+            print(f"[history] Статистика синхронизирована с операциями: доходы={di} ₽, расходы={de} ₽")
+    except Exception as e:
+        print(f"[history] sync_panel_income_expense_with_operations: {e}")
+
 
 # Параллельные запросы главной (браузер): схлопываем повторную вставку одного op_id.
 _CROSS_RESPONSE_INJECT_MONO = {}  # op_id -> monotonic time of last insert
@@ -705,6 +733,34 @@ def parse_iso_date_to_ms(val) -> Optional[int]:
         return None
 
 
+def parse_panel_datetime_iso(dt_raw) -> tuple:
+    """
+    Панель и <input datetime-local> шлют ISO-подобную строку, часто без секунд (…TЧЧ:ММ).
+    Возвращает (date_str в формате банка, миллисекунды эпохи). Без dt_raw — текущий момент.
+    """
+    if not dt_raw:
+        now = datetime.now()
+        return now.strftime("%d.%m.%Y, %H:%M:%S"), int(now.timestamp() * 1000)
+    s = str(dt_raw).strip().replace("Z", "")
+    if "+" in s:
+        s = s.split("+", 1)[0]
+    if re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$", s):
+        s = s + ":00"
+    now = datetime.now()
+    try:
+        dt = datetime.fromisoformat(s)
+        return dt.strftime("%d.%m.%Y, %H:%M:%S"), int(dt.timestamp() * 1000)
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return dt.strftime("%d.%m.%Y, %H:%M:%S"), int(dt.timestamp() * 1000)
+        except ValueError:
+            continue
+    return now.strftime("%d.%m.%Y, %H:%M:%S"), int(now.timestamp() * 1000)
+
+
 # Явные ключи ленты (пустой массив тоже кандидат). items/payload — только если содержимое похоже на операции.
 _OPERATION_LOOSE_KEYS = frozenset(
     {
@@ -1127,11 +1183,23 @@ def overlay_manual_on_template(
         primary = "Операция" if typ == "Debit" else "Поступление"
     secondary = (op.get("subtitle") or "").strip()
     wall_ms = int(datetime.now().timestamp() * 1000)
-    ms = date_str_to_millis(op.get("date", ""))
-    if min_time_ms is not None:
-        ms = max(ms, min_time_ms + 1)
-    if clamp_to_wall_ms:
-        ms = max(ms, wall_ms)
+    parsed_bank = parse_bank_date_str_to_ms(op.get("date"))
+    ot_manual = op.get("operationTime") if isinstance(op.get("operationTime"), dict) else None
+    picked_ms = None
+    if parsed_bank is not None:
+        picked_ms = parsed_bank
+    elif isinstance(ot_manual, dict):
+        v = ot_manual.get("milliseconds")
+        if isinstance(v, (int, float)) and int(v) > 0:
+            picked_ms = int(v)
+    if picked_ms is not None:
+        ms = picked_ms
+    else:
+        ms = date_str_to_millis(op.get("date", ""))
+        if min_time_ms is not None:
+            ms = max(ms, min_time_ms + 1)
+        if clamp_to_wall_ms:
+            ms = max(ms, wall_ms)
 
     if isinstance(out.get("amount"), dict):
         out["amount"]["value"] = amt
@@ -1825,6 +1893,36 @@ def _iter_fake_debit_ops_month():
             yield oid_s, float(amt or 0), op
 
 
+def _iter_fake_credit_ops_month():
+    """Credit из fake_history за текущий месяц: (id_str или '', amount, op)."""
+    seen_ids = set()
+    for path in _last_transfer_json_paths():
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            if bank_debug_enabled():
+                print(f"[history] _iter_fake_credit_ops_month {path}: {e}")
+            continue
+        for op in data.get("fake_history") or []:
+            if not isinstance(op, dict) or op.get("type") != "Credit":
+                continue
+            if not _fake_op_in_current_month(op):
+                continue
+            oid = op.get("id")
+            oid_s = str(oid).strip() if oid is not None and str(oid).strip() else ""
+            if oid_s:
+                if oid_s in seen_ids or oid_s in hidden_operations:
+                    continue
+                seen_ids.add(oid_s)
+            amt = op.get("amount")
+            if isinstance(amt, dict):
+                amt = amt.get("value", 0)
+            yield oid_s, float(amt or 0), op
+
+
 def _iter_fake_debit_ops_all():
     """Все Debit из fake_history (не только текущий месяц)."""
     seen_ids = set()
@@ -1851,6 +1949,41 @@ def _iter_fake_debit_ops_all():
             if isinstance(amt, dict):
                 amt = amt.get("value", 0)
             yield oid_s, float(amt or 0), op
+
+
+def _iter_fake_credit_ops_all():
+    """Все Credit из fake_history (не только текущий месяц)."""
+    seen_ids = set()
+    for path in _last_transfer_json_paths():
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            if bank_debug_enabled():
+                print(f"[history] _iter_fake_credit_ops_all {path}: {e}")
+            continue
+        for op in data.get("fake_history") or []:
+            if not isinstance(op, dict) or op.get("type") != "Credit":
+                continue
+            oid = op.get("id")
+            oid_s = str(oid).strip() if oid is not None and str(oid).strip() else ""
+            if oid_s:
+                if oid_s in seen_ids or oid_s in hidden_operations:
+                    continue
+                seen_ids.add(oid_s)
+            amt = op.get("amount")
+            if isinstance(amt, dict):
+                amt = amt.get("value", 0)
+            yield oid_s, float(amt or 0), op
+
+
+def _fake_credit_month_total() -> float:
+    t = 0.0
+    for _oid, amt, _op in _iter_fake_credit_ops_month():
+        t += amt
+    return round(min(t, 1e15), 2)
 
 
 def _fake_debit_extra_not_in_cache_all() -> tuple:
@@ -2298,6 +2431,62 @@ def _manual_operations_income_expense_month(restrict_month: bool = True) -> tupl
     return round(inc, 2), round(exp, 2)
 
 
+def calculate_manual_and_mock_transfer_stats(restrict_month: bool = True):
+    """
+    Доходы/расходы и счётчики только для ручных операций (manual_operations.json)
+    и мок‑переводов (fake_history / legacy total_out_rub). Без сумм из кэша реальных операций банка.
+    """
+    ensure_manual_operations_fresh()
+    income = expense = 0.0
+    inc_cnt = exp_cnt = 0
+
+    for op_id, op in manual_operations.items():
+        if op_id in hidden_operations:
+            continue
+        if restrict_month and not is_current_month(op.get("date", "")):
+            continue
+        amt = float(op.get("amount") or 0)
+        if op.get("type") == "Credit":
+            income += amt
+            inc_cnt += 1
+        elif op.get("type") == "Debit":
+            expense += abs(amt)
+            exp_cnt += 1
+
+    extra_out = float((controller.config.get("transfers") or {}).get("total_out_rub", 0) or 0)
+
+    if restrict_month:
+        fake_deb_m = get_fake_expense_from_last_transfer()
+        if fake_deb_m > 0:
+            expense = round(expense + fake_deb_m, 2)
+            exp_cnt += sum(1 for _ in _iter_fake_debit_ops_month())
+        elif extra_out > 0:
+            expense = round(expense + extra_out, 2)
+        fake_cred_m = _fake_credit_month_total()
+        if fake_cred_m > 0:
+            income = round(income + fake_cred_m, 2)
+            inc_cnt += sum(1 for _ in _iter_fake_credit_ops_month())
+    else:
+        d_sum = 0.0
+        n_d = 0
+        for _oid, amt, _op in _iter_fake_debit_ops_all():
+            d_sum += amt
+            n_d += 1
+        expense = round(expense + d_sum, 2)
+        exp_cnt += n_d
+        if d_sum <= 0 and n_d <= 0 and extra_out > 0:
+            expense = round(expense + extra_out, 2)
+        c_sum = 0.0
+        n_c = 0
+        for _oid, amt, _op in _iter_fake_credit_ops_all():
+            c_sum += amt
+            n_c += 1
+        income = round(income + c_sum, 2)
+        inc_cnt += n_c
+
+    return round(income, 2), round(expense, 2), inc_cnt, exp_cnt
+
+
 def calculate_stats(restrict_month: bool = True):
     ensure_manual_operations_fresh()
     income = expense = 0.0
@@ -2399,19 +2588,20 @@ def build_operations_api_response():
             if line1:
                 row["desc"] = line1
         month_ops.append(row)
-    now_wall_ms = int(datetime.now().timestamp() * 1000)
     manual_entries = [
         (oid, o)
         for oid, o in manual_operations.items()
         if show_all or is_current_month(o.get("date", ""))
     ]
-    for rank, (op_id, op) in enumerate(manual_entries):
+    for op_id, op in manual_entries:
         line1 = (op.get("title") or op.get("requisite_phone") or op.get("phone") or op.get("description") or "")
-        ts = date_str_to_millis(op.get("date", ""))
+        ts = operation_time_ms(op)
+        if ts <= 0:
+            ts = date_str_to_millis(op.get("date", ""))
         month_ops.append({
             "id": op_id,
             "date": op.get("date", ""),
-            "sort_ts": max(ts, now_wall_ms) + rank,
+            "sort_ts": ts,
             "amount": op.get("amount", 0),
             "type": op.get("type", ""),
             "desc": line1,
@@ -2605,20 +2795,7 @@ def request(flow: http.HTTPFlow) -> None:
             requisite_phone = (body.get("requisite_phone") or body.get("phone") or "").strip()
             bank_preset = (body.get("bank_preset") or "custom").strip().lower() or "custom"
             op_type = "Debit" if direction == "out" else "Credit"
-            dt_raw = body.get("datetime")
-            if dt_raw:
-                try:
-                    s = str(dt_raw).strip().replace("Z", "")
-                    if "+" in s:
-                        s = s.split("+", 1)[0]
-                    dt = datetime.fromisoformat(s)
-                    date_str = dt.strftime("%d.%m.%Y, %H:%M:%S")
-                except Exception:
-                    now = datetime.now()
-                    date_str = now.strftime("%d.%m.%Y, %H:%M:%S")
-            else:
-                now = datetime.now()
-                date_str = now.strftime("%d.%m.%Y, %H:%M:%S")
+            date_str, op_ms = parse_panel_datetime_iso(body.get("datetime"))
             op_id = "m_" + uuid.uuid4().hex[:12]
             manual_operations[op_id] = {
                 "id": op_id,
@@ -2636,6 +2813,7 @@ def request(flow: http.HTTPFlow) -> None:
                 "receipt_phone": (body.get("receipt_phone") or "").strip(),
                 "card_number": (body.get("card_number") or "").strip(),
                 "bank_preset": bank_preset,
+                "operationTime": {"milliseconds": op_ms, "seconds": op_ms / 1000.0},
             }
             save_manual_operations()
             
@@ -2657,6 +2835,7 @@ def request(flow: http.HTTPFlow) -> None:
                 manual_operations[op_id]["pdf_path"] = receipt_path
                 save_manual_operations()
 
+            sync_panel_income_expense_with_operations()
             flow.response = http.Response.make(
                 200,
                 json.dumps({"status": "ok", "id": op_id, "receipt_path": receipt_path}, ensure_ascii=False).encode("utf-8"),
@@ -2679,9 +2858,11 @@ def request(flow: http.HTTPFlow) -> None:
                 del manual_operations[op_id]
                 hidden_operations.discard(op_id)
                 save_manual_operations()
+                sync_panel_income_expense_with_operations()
                 flow.response = http.Response.make(200, json.dumps({"status": "ok"}).encode("utf-8"), {"Content-Type": "application/json"})
                 print(f"[history] Удалена ручная операция {op_id}")
             elif remove_fake_transfer_operation(op_id):
+                sync_panel_income_expense_with_operations()
                 flow.response = http.Response.make(200, json.dumps({"status": "ok"}).encode("utf-8"), {"Content-Type": "application/json"})
                 print(f"[history] Удалена операция мок‑перевода {op_id}")
             else:
@@ -2712,15 +2893,11 @@ def request(flow: http.HTTPFlow) -> None:
                 if k in body:
                     rec[k] = (body.get(k) or "").strip() if isinstance(body.get(k), str) else body.get(k)
             if body.get("datetime"):
-                try:
-                    s = str(body["datetime"]).strip().replace("Z", "")
-                    if "+" in s:
-                        s = s.split("+", 1)[0]
-                    dt = datetime.fromisoformat(s)
-                    rec["date"] = dt.strftime("%d.%m.%Y, %H:%M:%S")
-                except Exception:
-                    pass
+                dstr, op_ms = parse_panel_datetime_iso(body["datetime"])
+                rec["date"] = dstr
+                rec["operationTime"] = {"milliseconds": op_ms, "seconds": op_ms / 1000.0}
             save_manual_operations()
+            sync_panel_income_expense_with_operations()
             flow.response = http.Response.make(
                 200,
                 json.dumps({"status": "ok", "id": op_id}, ensure_ascii=False).encode("utf-8"),

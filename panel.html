@@ -150,9 +150,23 @@
             border: 2px solid #ffd53d;
             border-radius: 8px;
             padding: 4px 8px;
-            width: 180px;
+            width: 140px;
+            max-width: 100%;
             outline: none;
         }
+        .stat-edit-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+        }
+        .stat-edit-row .btn { padding: 8px 14px; font-size: 0.85rem; border-radius: 12px; }
+        .btn-stat-cancel {
+            background: #2d2d2d;
+            color: #e2e8f0;
+            border: 1px solid #444;
+        }
+        .btn-stat-cancel:hover { background: #3d3d3d; }
         .manual-stat {
             font-style: italic;
             opacity: 0.8;
@@ -817,36 +831,69 @@
             if (!configLoaded) { loadConfig(); configLoaded = true; }
         }
 
+        function getStatSpan(type) {
+            return document.getElementById(type === 'income' ? 'incomeAmount' : 'expenseAmount').querySelector('.editable-stat');
+        }
+
+        function cancelStatEdit(type) {
+            const span = getStatSpan(type);
+            if (!span || span.dataset.editing !== '1') return;
+            span.innerHTML = span.dataset.originalHtml || '';
+            delete span.dataset.editing;
+            delete span.dataset.originalHtml;
+            span.classList.remove('editing');
+        }
+
+        function commitStatEdit(type) {
+            const span = getStatSpan(type);
+            if (!span || span.dataset.editing !== '1') return;
+            const input = span.querySelector('input.stat-edit-input');
+            const numValue = parseFloat(input && input.value) || 0;
+            span.innerHTML = numValue.toLocaleString() + ' ₽';
+            delete span.dataset.editing;
+            delete span.dataset.originalHtml;
+            span.classList.remove('editing');
+            saveManualStat(type, numValue);
+        }
+
         function editStat(type) {
-            const span = document.getElementById(type === 'income' ? 'incomeAmount' : 'expenseAmount').querySelector('.editable-stat');
+            ['income', 'expense'].forEach(t => { if (t !== type) cancelStatEdit(t); });
+            const span = getStatSpan(type);
+            if (!span || span.dataset.editing === '1') return;
             const currentText = span.innerText.replace(/[^\d.,\-+]/g, '').replace(',', '.');
             const currentValue = parseFloat(currentText) || 0;
+            span.dataset.editing = '1';
+            span.dataset.originalHtml = span.innerHTML;
+
+            const row = document.createElement('div');
+            row.className = 'stat-edit-row';
+            row.addEventListener('click', e => e.stopPropagation());
+
             const input = document.createElement('input');
             input.type = 'number';
             input.step = '0.01';
             input.value = currentValue;
             input.className = 'stat-edit-input';
-            input.onblur = function() {
-                finishEdit(type, input.value);
-            };
-            input.onkeypress = function(e) {
-                if (e.key === 'Enter') {
-                    finishEdit(type, input.value);
-                }
-            };
-            span.innerHTML = '';
-            span.appendChild(input);
-            input.focus();
-            span.classList.add('editing');
-        }
 
-        function finishEdit(type, value) {
-            const span = document.getElementById(type === 'income' ? 'incomeAmount' : 'expenseAmount').querySelector('.editable-stat');
-            const numValue = parseFloat(value) || 0;
-            span.innerHTML = numValue.toLocaleString() + ' ₽';
-            span.classList.remove('editing');
-            // Сохраняем новое значение на сервер
-            saveManualStat(type, numValue);
+            const btnSave = document.createElement('button');
+            btnSave.type = 'button';
+            btnSave.className = 'btn btn-success';
+            btnSave.textContent = 'Сохранить';
+            btnSave.addEventListener('click', e => { e.stopPropagation(); commitStatEdit(type); });
+
+            const btnCancel = document.createElement('button');
+            btnCancel.type = 'button';
+            btnCancel.className = 'btn btn-stat-cancel';
+            btnCancel.textContent = 'Отмена';
+            btnCancel.addEventListener('click', e => { e.stopPropagation(); cancelStatEdit(type); });
+
+            row.appendChild(input);
+            row.appendChild(btnSave);
+            row.appendChild(btnCancel);
+            span.innerHTML = '';
+            span.appendChild(row);
+            span.classList.add('editing');
+            input.focus();
         }
 
         function saveManualStat(type, value) {
@@ -895,8 +942,10 @@
                 .then(data => {
                     operations = data.operations || [];
                     hiddenOps = new Set(data.hidden || []);
-                    document.getElementById('incomeAmount').querySelector('.editable-stat').innerHTML = data.stats.income.toLocaleString() + ' ₽';
-                    document.getElementById('expenseAmount').querySelector('.editable-stat').innerHTML = data.stats.expense.toLocaleString() + ' ₽';
+                    const incEl = document.getElementById('incomeAmount').querySelector('.editable-stat');
+                    const expEl = document.getElementById('expenseAmount').querySelector('.editable-stat');
+                    if (incEl.dataset.editing !== '1') incEl.innerHTML = data.stats.income.toLocaleString() + ' ₽';
+                    if (expEl.dataset.editing !== '1') expEl.innerHTML = data.stats.expense.toLocaleString() + ' ₽';
                     document.getElementById('incomeCount').innerText = data.stats.income_count + ' оп.';
                     document.getElementById('expenseCount').innerText = data.stats.expense_count + ' оп.';
                     filterOps();

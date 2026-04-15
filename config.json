@@ -41,8 +41,6 @@
   },
   "browser_finanalytics_dom_patch": false,
   "manual": {
-    "income": 30000,
-    "expense": 410202,
-    "histogram_sync_with_operations": false
+    "histogram_sync_with_operations": true
   }
 }
