@@ -20,7 +20,7 @@ from bank_filter import (
 
 ALLOWED_IPS = ["85.209.135.247", "5.18.160.29", "85.192.60.79", "127.0.0.1"]
 PANEL_PORT = 8082
-HOST_IP = os.environ.get("TBANKMITM_PUBLIC_IP", "85.209.135.247")
+HOST_IP = os.environ.get("TBANKMITM_PUBLIC_IP", "85.192.60.79")
 
 
 def _env_truthy(name: str) -> bool:
