@@ -1193,6 +1193,11 @@ HTML_PANEL = """<!DOCTYPE html>
         function generateStatementPdf(asDownload) {
             const df = document.getElementById('stmt_date_from').value;
             const dt = document.getElementById('stmt_date_to').value;
+            /* iOS Safari: window.open после async fetch блокируется; «Скачать» — через blob + a[download]. */
+            let previewWin = null;
+            if (!asDownload) {
+                try { previewWin = window.open('about:blank', '_blank'); } catch (e) {}
+            }
             fetch('/api/statement/generate', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -1201,12 +1206,40 @@ HTML_PANEL = """<!DOCTYPE html>
             .then(r => r.json())
             .then(d => {
                 if (d.error || !d.url) throw new Error(d.error || 'fail');
-                let u = d.url + (d.url.indexOf('?') >= 0 ? '&' : '?') + 'download=' + (asDownload ? '1' : '0');
-                if (u.startsWith('/')) u = window.location.origin + u;
-                window.open(u, '_blank');
+                const sep = d.url.indexOf('?') >= 0 ? '&' : '?';
+                const fname = String(d.filename || 'statement.pdf').replace(/[^A-Za-z0-9._-]+/g, '_');
+                let uView = d.url + sep + 'download=0';
+                if (uView.startsWith('/')) uView = window.location.origin + uView;
+                if (asDownload) {
+                    let uBlob = d.url + sep + 'download=1';
+                    if (uBlob.startsWith('/')) uBlob = window.location.origin + uBlob;
+                    return fetch(uBlob, { credentials: 'same-origin' }).then(function(resp) {
+                        if (!resp.ok) throw new Error('PDF ' + resp.status);
+                        return resp.blob();
+                    }).then(function(blob) {
+                        var blobUrl = URL.createObjectURL(blob);
+                        var a = document.createElement('a');
+                        a.href = blobUrl;
+                        a.download = fname;
+                        a.rel = 'noopener';
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                        setTimeout(function() { try { URL.revokeObjectURL(blobUrl); } catch (e) {} }, 90000);
+                        showToast('Выписка готова');
+                    });
+                }
+                if (previewWin && !previewWin.closed) {
+                    previewWin.location.href = uView;
+                } else {
+                    window.open(uView, '_blank');
+                }
                 showToast('Выписка готова');
             })
-            .catch((e) => showToast((e && e.message) ? e.message : 'Ошибка формирования выписки'));
+            .catch(function(e) {
+                try { if (previewWin && !previewWin.closed) previewWin.close(); } catch (x) {}
+                showToast((e && e.message) ? e.message : 'Ошибка формирования выписки');
+            });
         }
 
         function loadAllData() {
