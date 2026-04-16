@@ -2,8 +2,8 @@
   "name": {
     "first_name": "Сергей",
     "last_name": "Олегович",
-    "middle_name": "Владимировна",
-    "full_name": "Кузнецова Ирина Владимировна",
+    "middle_name": "Владимирович",
+    "full_name": "Олегович Сергей Владимирович",
     "phone": "+79108169323",
     "phone_number": "9991112233",
     "first_name_en": "Irina",
@@ -25,7 +25,7 @@
     "beneficiary": "Перевод средств по договору № 5456920 Кузнецова Ирина Владимировна НДС не облагается"
   },
   "balance": {
-    "new_balance": 10000000.22,
+    "new_balance": 9980000.22,
     "new_card_number": "6800******2733",
     "new_collect_sum": 24925,
     "new_card_number2": "6181******8690"
@@ -43,7 +43,7 @@
   "panel_fetch_origin": "http://85.192.60.79:8082",
   "manual": {
     "histogram_sync_with_operations": true,
-    "expense": 15857.83,
-    "income": 40068.88
+    "expense": 60050.0,
+    "income": 26050.0
   }
 }

@@ -7,6 +7,7 @@ import string
 from pathlib import Path
 import random
 from datetime import datetime, timedelta
+from typing import Optional
 
 
 random_operations = ["Оплата в OZON", "Оплата в Rostics Moskva\nRUS", "Оплата в Wildberries",
@@ -400,8 +401,20 @@ def generate_operation_receipt(op_data, output_path=None):
         else:
             display_sender = format_receipt_sender_short(nm.get("full_name", ""), nm)
 
-    # Данные операции
-    date_str = op_data.get("date", datetime.now().strftime("%d.%m.%Y, %H:%M:%S"))
+    # Данные операции (время — из operationTime, если есть, чтобы совпадало с лентой и секундами)
+    date_str = (op_data.get("date") or op_data.get("date_full") or "").strip()
+    ot_ms = op_data.get("operationTime")
+    if isinstance(ot_ms, dict):
+        try:
+            _v = int(ot_ms.get("milliseconds") or 0)
+            if _v > 0:
+                date_str = datetime.fromtimestamp(_v / 1000).strftime("%d.%m.%Y, %H:%M:%S")
+        except (TypeError, ValueError, OSError):
+            pass
+    if not date_str:
+        date_str = datetime.now().strftime("%d.%m.%Y, %H:%M:%S")
+    if date_str and "," not in date_str and re.search(r"\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}:\d{2}", date_str):
+        date_str = re.sub(r"(\d{2}\.\d{2}\.\d{4})\s+", r"\1, ", date_str, count=1)
     amount = abs(float(op_data.get("amount") or 0))
     bank = op_data.get("bank") or op_data.get("title") or "Перевод"
     receiver_name = op_data.get("title") or "Получатель"
@@ -474,5 +487,35 @@ def generate_operation_receipt(op_data, output_path=None):
         return output_path
 
 
+def _statement_font_path() -> Optional[str]:
+    wd = os.environ.get("WINDIR") or os.environ.get("SystemRoot") or r"C:\Windows"
+    for name in ("arial.ttf", "arialuni.ttf", "segoeui.ttf"):
+        p = os.path.join(wd, "Fonts", name)
+        if os.path.isfile(p):
+            return p
+    for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"):
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def statement_sample_pdf_path() -> str:
+    """Путь к шаблону Выписка.pdf (лежит рядом с модулем)."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "Выписка.pdf")
+
+
+def generate_account_statement_pdf(movements, from_ms: int, to_ms: int, output_path: str, config: dict) -> str:
+    """
+    Выписка: страницы и вёрстка из файла Выписка.pdf, подставляются только наши данные и операции.
+    """
+    import statement_template_fill as stf
+
+    return stf.generate_statement_pdf_from_template(
+        list(movements or []),
+        int(from_ms),
+        int(to_ms),
+        output_path,
+        config or {},
+    )
 
 

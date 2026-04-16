@@ -6,7 +6,17 @@ cd "$(dirname "$0")"
 
 if [[ ! -x venv/bin/python ]]; then
   echo "Сначала: chmod +x setup_linux.sh start_vps.sh && ./setup_linux.sh"
+  echo "Полный стек (curl, шрифты PDF, ghostscript): TBANKMITM_APT=1 ./setup_linux.sh"
   exit 1
+fi
+
+# Кириллица в панели / описаниях операций / PDF на минимальных образах Debian/Ubuntu
+export PYTHONUTF8="${PYTHONUTF8:-1}"
+if [[ -z "${LC_ALL:-}" ]]; then
+  export LC_ALL=C.UTF-8
+fi
+if [[ -z "${LANG:-}" ]]; then
+  export LANG=C.UTF-8
 fi
 
 # Панель с телефона в мобильной сети: без этого будет 403 из-за фильтра IP в panel_bridge.

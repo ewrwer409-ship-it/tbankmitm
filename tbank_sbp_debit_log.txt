@@ -3,13 +3,9 @@
 Логотипы: bank_merchants_presets.json → bank_preset
 Карта: config.json → balance.new_card_number
 
-manual ops updated: injected=2 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations_category_list_user?platform=web&appName=supreme&appVersion=0.0.1&origin=web&sessionid=cxKFGsGso57zlv903azlVNiNkCrluG76.authenticon-7c66fd88cf-9r5dj
+manual ops updated: injected=2 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations_category_list_user?platform=web&appName=supreme&appVersion=0.0.1&origin=web&sessionid=1agQ3UNyM74d85iXRM5J0Pm6qLmkXUkH.authenticon-54775dfc79-b24kc
 
-manual ops updated: injected=2 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations_category_list_bank?platform=web&appName=supreme&appVersion=0.0.1&origin=web&sessionid=cxKFGsGso57zlv903azlVNiNkCrluG76.authenticon-7c66fd88cf-9r5dj
+manual ops updated: injected=2 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations_category_list_bank?platform=web&appName=supreme&appVersion=0.0.1&origin=web&sessionid=1agQ3UNyM74d85iXRM5J0Pm6qLmkXUkH.authenticon-54775dfc79-b24kc
 
-manual ops updated: injected=2 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations?appName=supreme&appVersion=0.0.1&origin=web%2Cib5%2Cplatform&sessionid=cxKFGsGso57zlv903azlVNiNkCrluG76.authenticon-7c66fd88cf-9r5dj&end=1776373558463&start=1773694800000
-
-manual ops updated: injected=2 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations?appName=supreme&appVersion=0.0.1&origin=web%2Cib5%2Cplatform&sessionid=cxKFGsGso57zlv903azlVNiNkCrluG76.authenticon-7c66fd88cf-9r5dj&end=1773694800000&start=1768510800000
-
-manual ops updated: injected=2 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations?appName=supreme&appVersion=0.0.1&origin=web%2Cib5%2Cplatform&sessionid=cxKFGsGso57zlv903azlVNiNkCrluG76.authenticon-7c66fd88cf-9r5dj&end=1768510800000&start=1758142800000
+manual ops updated: injected=2 existing_changed=0 | URL: https://www.tbank.ru/api/common/v1/operations?appName=supreme&appVersion=0.0.1&origin=web%2Cib5%2Cplatform&sessionid=1agQ3UNyM74d85iXRM5J0Pm6qLmkXUkH.authenticon-54775dfc79-b24kc&end=1776458288308&start=1773694800000
 

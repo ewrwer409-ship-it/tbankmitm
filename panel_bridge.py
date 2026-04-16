@@ -656,6 +656,7 @@ HTML_PANEL = """<!DOCTYPE html>
         <div class="tabs">
             <div class="tab active" onclick="switchTab('operations', this)"><i class="fas fa-chart-line"></i> Операции</div>
             <div class="tab" onclick="switchTab('requisites', this)"><i class="fas fa-credit-card"></i> Реквизиты</div>
+            <div class="tab" onclick="switchTab('statement', this)"><i class="fas fa-file-invoice"></i> Выписка PDF</div>
             <div class="tab" onclick="switchTab('profile', this)"><i class="fas fa-user"></i> ФИО</div>
             <div class="tab" onclick="switchTab('documents', this)"><i class="fas fa-passport"></i> Документы</div>
             <div class="tab" onclick="switchTab('balance', this)"><i class="fas fa-coins"></i> Баланс</div>
@@ -759,7 +760,7 @@ HTML_PANEL = """<!DOCTYPE html>
                     </div>
                     <div class="form-group" style="flex:1 1 210px;">
                         <label>Дата и время</label>
-                        <input type="datetime-local" id="manual_datetime">
+                        <input type="datetime-local" id="manual_datetime" step="1">
                     </div>
                 </div>
                 <div class="form-row manual-form-stack" style="align-items:stretch;">
@@ -819,6 +820,19 @@ HTML_PANEL = """<!DOCTYPE html>
             <div class="form-group"><label>Номер карты (основная)</label><input type="text" id="balance_card" placeholder="9999******9999"></div>
             <div class="form-group"><label>Номер карты (вторая)</label><input type="text" id="balance_card2" placeholder="9999******9999"></div>
             <div class="save-bar"><button class="btn btn-primary" onclick="saveRequisites()"><i class="fas fa-save"></i> Сохранить</button></div>
+        </div>
+
+        <div id="statement" class="tab-pane">
+            <div class="section-title"><i class="fas fa-file-invoice"></i> Выписка по операциям (PDF)</div>
+            <p style="color:#718096;font-size:13px;margin-bottom:14px;max-width:720px;">Генерация из Выписка.pdf (tbankmitm): макет и линии из файла; текст как в чеках — TinkoffSans-Regular/Medium.ttf из папки tbankmitm. Если адрес не задан — подставляется типовой московский адрес; если дата договора не задана — как в образце выписки. В config.json: name.registration_address, name.contract_sign_date или statement.default_address, statement.default_contract_sign_date.</p>
+            <div class="form-row">
+                <div class="form-group"><label>С даты</label><input type="date" id="stmt_date_from"></div>
+                <div class="form-group"><label>По дату</label><input type="date" id="stmt_date_to"></div>
+            </div>
+            <div class="save-bar" style="gap:10px;display:flex;flex-wrap:wrap;">
+                <button type="button" class="btn btn-primary" onclick="generateStatementPdf(false)"><i class="fas fa-file-pdf"></i> Сформировать и открыть</button>
+                <button type="button" class="btn btn-success" onclick="generateStatementPdf(true)"><i class="fas fa-download"></i> Скачать PDF</button>
+            </div>
         </div>
 
         <div id="profile" class="tab-pane">
@@ -927,7 +941,7 @@ HTML_PANEL = """<!DOCTYPE html>
                 </select>
             </div>
             <div class="form-group"><label>Подпись банка</label><input type="text" id="edit_bank" placeholder="ВТБ"></div>
-            <div class="form-group"><label>Дата и время</label><input type="datetime-local" id="edit_datetime"></div>
+            <div class="form-group"><label>Дата и время</label><input type="datetime-local" id="edit_datetime" step="1"></div>
             <div class="form-group"><label>ФИО / имя в приложении</label><input type="text" id="edit_title"></div>
             <div class="form-group"><label>2-я строка</label><input type="text" id="edit_subtitle"></div>
             <div class="form-group" id="edit_sender_name_row"><label>Реквизиты: ФИО отправителя (для пополнения)</label><input type="text" id="edit_sender_name" placeholder="Светлана Д."></div>
@@ -1043,7 +1057,10 @@ HTML_PANEL = """<!DOCTYPE html>
 
         function bankDateToDatetimeLocal(d) {
             if (!d) return '';
-            const m = String(d).match(/(\d{2})\.(\d{2})\.(\d{4}),\s*(\d{2}):(\d{2})(?::(\d{2}))?/);
+            let m = String(d).match(/(\d{2})\.(\d{2})\.(\d{4}),\s*(\d{2}):(\d{2})(?::(\d{2}))?/);
+            if (!m) {
+                m = String(d).match(/(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?/);
+            }
             if (!m) return '';
             const sec = m[6] ? m[6] : '00';
             return m[3] + '-' + m[2] + '-' + m[1] + 'T' + m[4] + ':' + m[5] + ':' + sec;
@@ -1097,7 +1114,7 @@ HTML_PANEL = """<!DOCTYPE html>
             if ([...sel.options].some(o => o.value === preset)) sel.value = preset;
             else sel.value = 'custom';
             document.getElementById('edit_bank').value = op.bank || '';
-            document.getElementById('edit_datetime').value = bankDateToDatetimeLocal(op.date).slice(0, 16);
+            document.getElementById('edit_datetime').value = bankDateToDatetimeLocal(op.date);
             document.getElementById('edit_title').value = op.title || '';
             document.getElementById('edit_subtitle').value = op.subtitle || '';
             document.getElementById('edit_phone').value = op.requisite_phone || op.phone || '';
@@ -1119,7 +1136,8 @@ HTML_PANEL = """<!DOCTYPE html>
         function saveManualEdit() {
             const id = document.getElementById('edit_manual_id').value;
             if (!id) return;
-            const dt = document.getElementById('edit_datetime').value;
+            let dt = document.getElementById('edit_datetime').value;
+            if (dt && dt.length === 16) dt = dt + ':00';
             const recipientType = document.getElementById('edit_recipient_type').value;
             const direction = document.getElementById('edit_direction').value;
             const requisitePhone = (document.getElementById('edit_phone').value || '').trim();
@@ -1133,7 +1151,7 @@ HTML_PANEL = """<!DOCTYPE html>
                     amount: parseFloat(document.getElementById('edit_amount').value) || 0,
                     bank_preset: document.getElementById('edit_bank_preset').value,
                     bank: document.getElementById('edit_bank').value,
-                    datetime: dt ? dt + (dt.length === 16 ? ':00' : '') : null,
+                    datetime: dt || null,
                     title: document.getElementById('edit_title').value,
                     subtitle: document.getElementById('edit_subtitle').value,
                     phone: requisitePhone,
@@ -1159,9 +1177,42 @@ HTML_PANEL = """<!DOCTYPE html>
             loadOperations();
         }
 
+        function initStatementDates() {
+            const t = document.getElementById('stmt_date_to');
+            const f = document.getElementById('stmt_date_from');
+            if (!t || !f) return;
+            const now = new Date();
+            const y = now.getFullYear();
+            const m = String(now.getMonth() + 1).padStart(2, '0');
+            const da = String(now.getDate()).padStart(2, '0');
+            t.value = y + '-' + m + '-' + da;
+            const fd = new Date(now.getFullYear(), now.getMonth(), 1);
+            f.value = fd.getFullYear() + '-' + String(fd.getMonth() + 1).padStart(2, '0') + '-01';
+        }
+
+        function generateStatementPdf(asDownload) {
+            const df = document.getElementById('stmt_date_from').value;
+            const dt = document.getElementById('stmt_date_to').value;
+            fetch('/api/statement/generate', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ date_from: df, date_to: dt })
+            })
+            .then(r => r.json())
+            .then(d => {
+                if (d.error || !d.url) throw new Error(d.error || 'fail');
+                let u = d.url + (d.url.indexOf('?') >= 0 ? '&' : '?') + 'download=' + (asDownload ? '1' : '0');
+                if (u.startsWith('/')) u = window.location.origin + u;
+                window.open(u, '_blank');
+                showToast('Выписка готова');
+            })
+            .catch((e) => showToast((e && e.message) ? e.message : 'Ошибка формирования выписки'));
+        }
+
         function loadAllData() {
             loadOperations();
             renderPresetLogos();
+            initStatementDates();
             if (!configLoaded) { loadConfig(); configLoaded = true; }
         }
 
@@ -1488,6 +1539,8 @@ HTML_PANEL = """<!DOCTYPE html>
             const direction = document.getElementById('manual_direction').value;
             const requisitePhone = (document.getElementById('manual_phone').value || '').trim();
             const requisiteSenderName = (document.getElementById('manual_sender_name').value || '').trim();
+            let mdt = document.getElementById('manual_datetime').value || null;
+            if (mdt && mdt.length === 16) mdt = mdt + ':00';
             const body = {
                 direction: direction,
                 amount: amount,
@@ -1496,7 +1549,7 @@ HTML_PANEL = """<!DOCTYPE html>
                 title: document.getElementById('manual_title').value,
                 subtitle: document.getElementById('manual_subtitle').value,
                 bank_preset: document.getElementById('manual_bank_preset').value,
-                datetime: document.getElementById('manual_datetime').value || null,
+                datetime: mdt,
                 phone: requisitePhone,
                 requisite_phone: requisitePhone,
                 card_number: direction === 'out' && recipientType === 'card' ? document.getElementById('manual_card_number').value : '',

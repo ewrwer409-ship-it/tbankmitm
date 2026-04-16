@@ -472,7 +472,8 @@ def _add_to_fake_history() -> bool:
     _last_fake_op_id = operation_id
     _last_fake_ts = current_time
     transfer_data["transaction_id"] = operation_id
-    transfer_data["date_full"] = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    op_ts_ms = int(current_time * 1000)
+    transfer_data["date_full"] = datetime.fromtimestamp(op_ts_ms / 1000).strftime("%d.%m.%Y, %H:%M:%S")
     if not transfer_data.get("kvit_number"):
         transfer_data["kvit_number"] = generate_kvit()
     save_data(transfer_data)
@@ -514,8 +515,8 @@ def _add_to_fake_history() -> bool:
         "ucid": "1386102627",
         "cardNumber": "220070******6404",
         "authorizationId": operation_id,
-        "operationTime": {"milliseconds": int(time.time() * 1000) + 2000},
-        "debitingTime": {"milliseconds": int(time.time() * 1000) + 2000},
+        "operationTime": {"milliseconds": op_ts_ms},
+        "debitingTime": {"milliseconds": op_ts_ms},
         "type": "Debit",
         "status": "OK",
         "amount": {"value": int(transfer_data.get("amount", 0)), "currency": {"code": 643, "name": "RUB", "strCode": "643"}},
@@ -669,10 +670,22 @@ def generate_receipt_for_manual_op(op_data):
     if amt <= 0:
         return None
 
-    date_s = (
-        (op_data.get("date") or op_data.get("date_full") or "").strip()
-        or datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-    )
+    date_s = ""
+    ot0 = op_data.get("operationTime")
+    if isinstance(ot0, dict):
+        try:
+            _ms = int(ot0.get("milliseconds") or 0)
+            if _ms > 0:
+                date_s = datetime.fromtimestamp(_ms / 1000).strftime("%d.%m.%Y, %H:%M:%S")
+        except (TypeError, ValueError, OSError):
+            pass
+    if not date_s:
+        date_s = (
+            (op_data.get("date") or op_data.get("date_full") or "").strip()
+            or datetime.now().strftime("%d.%m.%Y, %H:%M:%S")
+        )
+    if date_s and "," not in date_s and re.search(r"\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}:\d{2}", date_s):
+        date_s = re.sub(r"(\d{2}\.\d{2}\.\d{4})\s+", r"\1, ", date_s, count=1)
     bnk = (op_data.get("bank") or op_data.get("bank_receiver") or "").strip()
     ttl = (
         (op_data.get("title") or op_data.get("description") or op_data.get("receiver_name") or "").strip()

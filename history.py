@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urlparse
 import time
 import re
 import os
+import hashlib
 import sys
 import uuid
 import base64
@@ -28,6 +29,144 @@ manual_operations = {}
 hidden_operations = set()
 last_sync_time = None
 _manual_ops_mtime = None
+# Текст последней ошибки generate_statement_pdf_for_period (для ответа API).
+statement_generation_error = ""
+
+_STATEMENT_PHONE_RE = re.compile(r"(?:\+?\s*7|8)[\d\s\-()]{10,}")
+_STATEMENT_CONT_10_RE = re.compile(r"\b(\d{10})\b")
+# Подстроки: если есть — строка точно не «только ФИО».
+_STATEMENT_NOT_FIO_HINTS = frozenset(
+    (
+        "перевод",
+        "оплат",
+        "пополн",
+        "счёт",
+        "счет",
+        "договор",
+        "сбп",
+        "сбер",
+        "телеком",
+        "магаз",
+        "сервис",
+        "система",
+        "быстрых",
+        "внешн",
+        "внутрен",
+        "номер",
+        "телефон",
+        "входящ",
+        "исходящ",
+        "списан",
+        "возврат",
+        "комис",
+        "кешбэк",
+        "кэшбэк",
+        "банк",
+        "online",
+        "онлайн",
+        "авито",
+        "travel",
+        "платеж",
+        "заказ",
+        "подписк",
+        "карт",
+        "зачисл",
+        "сняти",
+        "банкомат",
+        "выплат",
+        "покуп",
+        "аренд",
+        "страх",
+        "кредит",
+        "займ",
+        "мобильн",
+        "связ",
+        "жкх",
+        "коммун",
+    )
+)
+_STATEMENT_ORG_PREFIXES = frozenset(
+    ("ооо", "оао", "зао", "ао", "ип", "тсж", "нко", "пао", "нп", "анл", "тд", "тк")
+)
+
+
+def _statement_looks_like_fio_only(s: str) -> bool:
+    """Короткое имя/инициалы без смыслового описания операции — в выписке не показываем."""
+    s = (s or "").strip()
+    if not s or len(s) > 90:
+        return False
+    if any(ch.isdigit() for ch in s):
+        return False
+    if "(" in s or ")" in s:
+        return False
+    low = s.lower()
+    if any(h in low for h in _STATEMENT_NOT_FIO_HINTS):
+        return False
+    parts = re.split(r"\s+", s)
+    if len(parts) < 2 or len(parts) > 5:
+        return False
+    if parts[0].lower() in _STATEMENT_ORG_PREFIXES:
+        return False
+    for p in parts:
+        core = re.sub(r"[^\w\u0400-\u04FF.-]", "", p, flags=re.UNICODE)
+        if not core or len(core) < 1:
+            return False
+        if not re.match(r"^[\w\u0400-\u04FF.-]+$", core, flags=re.UNICODE):
+            return False
+    return True
+
+
+def _statement_line_looks_bank_only(s: str) -> bool:
+    """Строка только с названием банка — в описании операции не показываем."""
+    low = (s or "").strip().lower()
+    if not low or len(low) > 56:
+        return False
+    if any(h in low for h in ("оплат", "перевод", "пополн", "списан", "покуп", "снятие", "кэшбэк", "кешбэк")):
+        return False
+    if "банкомат" in low:
+        return False
+    if "банк" in low or re.search(r"\bbank\b", low):
+        return len(low) <= 44
+    markers = (
+        "тинькофф",
+        "tinkoff",
+        "t-bank",
+        "tbank",
+        "т‑банк",
+        "сбербанк",
+        "sberbank",
+        "альфа-банк",
+        "альфа банк",
+        "втб",
+        "газпромбанк",
+        "райффайзен",
+        "raiffeisen",
+        "ozon банк",
+        "озон банк",
+        "совкомбанк",
+        "росбанк",
+        "мкб банк",
+        "открытие",
+    )
+    return any(m in low for m in markers) and len(low) <= 48
+
+
+def _statement_strip_fio_from_text(text: str) -> str:
+    """Убирает строки, похожие на ФИО или только на банк, из многострочного описания."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+    if "\n" not in t and "\r" not in t:
+        if _statement_looks_like_fio_only(t) or _statement_line_looks_bank_only(t):
+            return ""
+        return t
+    out: list[str] = []
+    for raw in re.split(r"\r?\n", t):
+        ln = raw.strip()
+        if not ln or _statement_looks_like_fio_only(ln) or _statement_line_looks_bank_only(ln):
+            continue
+        out.append(ln)
+    return "\n".join(out).strip()
 
 # Последняя сводка доход/расход из ответа API Т‑Банка (как на /mybank/operations), до подмены.
 _bank_histogram_income = None
@@ -708,17 +847,23 @@ def _propagate_amount_fields(out, amt, typ):
 
 
 def parse_bank_date_str_to_ms(date_str) -> Optional[int]:
-    """Строка вида 20.03.2025, 14:30:00 — иначе None (без «сейчас» по умолчанию)."""
+    """Строка вида 20.03.2025, 14:30:00 или 20.03.2025 14:30:00 — иначе None."""
     if not date_str or not isinstance(date_str, str):
         return None
-    try:
-        m = re.search(r"(\d{2})\.(\d{2})\.(\d{4}),\s*(\d{2}):(\d{2}):(\d{2})", date_str.strip())
-        if m:
-            d, mo, y, H, M, S = map(int, m.groups())
-            dt = datetime(y, mo, d, H, M, S)
-            return int(dt.timestamp() * 1000)
-    except Exception:
-        pass
+    s = date_str.strip()
+    patterns = (
+        r"(\d{2})\.(\d{2})\.(\d{4}),\s*(\d{2}):(\d{2}):(\d{2})",
+        r"(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2}):(\d{2})",
+    )
+    for pat in patterns:
+        try:
+            m = re.search(pat, s)
+            if m:
+                d, mo, y, H, M, S = map(int, m.groups())
+                dt = datetime(y, mo, d, H, M, S)
+                return int(dt.timestamp() * 1000)
+        except Exception:
+            pass
     return None
 
 
@@ -972,7 +1117,13 @@ def operation_row_kind(x) -> Optional[str]:
     if not isinstance(x, dict):
         return None
     t = x.get("type") or x.get("operationType")
-    if t in ("Credit", "Debit"):
+    if isinstance(t, str):
+        u = t.strip().upper()
+        if u == "CREDIT":
+            return "Credit"
+        if u == "DEBIT":
+            return "Debit"
+    elif t in ("Credit", "Debit"):
         return t
     direction = str(x.get("direction") or "").upper()
     if direction in ("IN", "INCOMING", "CREDIT"):
@@ -1036,9 +1187,11 @@ def operation_time_ms(op):
             if v > 1e9:
                 return int(v * 1000)
     parsed = parse_bank_date_str_to_ms(op.get("date"))
+    if parsed is None:
+        parsed = parse_bank_date_str_to_ms(op.get("date_full"))
     if parsed is not None:
         return parsed
-    for sk in ("date", "dateTime", "datetime"):
+    for sk in ("date", "date_full", "dateTime", "datetime"):
         p = parse_iso_date_to_ms(op.get(sk))
         if p is not None:
             return p
@@ -1378,14 +1531,12 @@ def overlay_manual_on_template(
 
 
 def date_str_to_millis(date_str):
-    try:
-        m = re.search(r"(\d{2})\.(\d{2})\.(\d{4}),\s*(\d{2}):(\d{2}):(\d{2})", date_str or "")
-        if m:
-            d, mo, y, H, M, S = map(int, m.groups())
-            dt = datetime(y, mo, d, H, M, S)
-            return int(dt.timestamp() * 1000)
-    except Exception:
-        pass
+    p = parse_bank_date_str_to_ms(date_str or "")
+    if p is not None:
+        return p
+    p2 = parse_iso_date_to_ms(date_str or "")
+    if p2 is not None:
+        return p2
     return int(datetime.now().timestamp() * 1000)
 
 
@@ -2173,16 +2324,20 @@ def _fake_history_op_to_receipt_dict(hop: dict) -> dict:
         amt = float(amt.get("value") or 0)
     else:
         amt = abs(float(amt or 0))
-    date_s = (hop.get("date_full") or "").strip()
-    if not date_s and isinstance(hop.get("operationTime"), dict):
+    date_s = ""
+    if isinstance(hop.get("operationTime"), dict):
         try:
             ms = int(hop["operationTime"].get("milliseconds") or 0)
             if ms > 0:
-                date_s = datetime.fromtimestamp(ms / 1000).strftime("%d.%m.%Y %H:%M:%S")
+                date_s = datetime.fromtimestamp(ms / 1000).strftime("%d.%m.%Y, %H:%M:%S")
         except (TypeError, ValueError, OSError):
             pass
     if not date_s:
-        date_s = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+        date_s = (hop.get("date_full") or "").strip()
+    if date_s and "," not in date_s and re.search(r"\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}:\d{2}", date_s):
+        date_s = re.sub(r"(\d{2}\.\d{2}\.\d{4})\s+", r"\1, ", date_s, count=1)
+    if not date_s:
+        date_s = datetime.now().strftime("%d.%m.%Y, %H:%M:%S")
     bank_line = (hop.get("bank_receiver") or "").strip()
     if not bank_line:
         br = hop.get("brand")
@@ -2250,6 +2405,7 @@ def ensure_operation_receipt_pdf_path(op_id: str) -> Optional[str]:
         op_data = {
             "id": op_id,
             "date": op.get("date") or "",
+            "operationTime": op.get("operationTime"),
             "amount": abs(float(op.get("amount") or 0)),
             "type": op.get("type") or "Debit",
             "bank": op.get("bank") or (op.get("bank_preset") or "") or "Перевод",
@@ -2591,6 +2747,665 @@ def compute_manual_balance_adjustment() -> float:
     return round(adj, 2)
 
 
+_STATEMENT_PDF_TOKENS: dict[str, tuple[str, float]] = {}
+
+
+def register_statement_pdf_token(abs_path: str) -> str:
+    token = uuid.uuid4().hex
+    now = time.time()
+    _STATEMENT_PDF_TOKENS[token] = (abs_path, now + 3600.0)
+    dead = [k for k, (_, exp) in _STATEMENT_PDF_TOKENS.items() if exp < now]
+    for k in dead:
+        _STATEMENT_PDF_TOKENS.pop(k, None)
+    return token
+
+
+def resolve_statement_pdf_token(token: str) -> Optional[str]:
+    ent = _STATEMENT_PDF_TOKENS.get((token or "").strip())
+    if not ent:
+        return None
+    path, exp = ent
+    if time.time() > exp:
+        _STATEMENT_PDF_TOKENS.pop((token or "").strip(), None)
+        return None
+    if not path or not os.path.isfile(path):
+        return None
+    return path
+
+
+def parse_statement_period_iso_dates(date_from: str, date_to: str) -> tuple[int, int]:
+    """Период по календарным датам YYYY-MM-DD (конец последнего дня включительно)."""
+    df = (date_from or "").strip()[:10]
+    dt = (date_to or "").strip()[:10]
+    now = datetime.now()
+    if not df:
+        df = now.replace(day=1).strftime("%Y-%m-%d")
+    if not dt:
+        dt = now.strftime("%Y-%m-%d")
+    d1 = datetime.strptime(df, "%Y-%m-%d")
+    d2 = datetime.strptime(dt, "%Y-%m-%d")
+    if d2 < d1:
+        d1, d2 = d2, d1
+    from_ms = int(d1.replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
+    end = d2.replace(hour=23, minute=59, second=59, microsecond=999000)
+    to_ms = int(end.timestamp() * 1000)
+    return from_ms, to_ms
+
+
+def _statement_normalize_phone(raw: str) -> str:
+    d = re.sub(r"\D", "", raw or "")
+    if len(d) == 11 and d[0] == "8":
+        d = "7" + d[1:]
+    if len(d) == 10:
+        d = "7" + d
+    if len(d) == 11 and d[0] == "7":
+        return "+" + d
+    return (raw or "").strip()
+
+
+def _statement_extract_transfer_phone(op: dict) -> str:
+    """Номер телефона, на который ушёл перевод (все типичные поля ответа API и вложенные узлы)."""
+    candidates: list[str] = []
+    keys = (
+        "requisite_phone",
+        "receiver_phone",
+        "phone",
+        "recipientPhone",
+        "phoneNumber",
+        "pointer",
+        "receiverPhone",
+        "toPhone",
+        "recipient_phone",
+        "mobileNumber",
+        "msisdn",
+        "receipt_phone",
+    )
+    for k in keys:
+        v = op.get(k)
+        if isinstance(v, str) and re.search(r"\d", v):
+            candidates.append(v.strip())
+        elif isinstance(v, dict):
+            for ik in ("value", "number", "phone", "plain"):
+                u = v.get(ik)
+                if isinstance(u, str) and re.search(r"\d", u):
+                    candidates.append(u.strip())
+    for subk in ("recipient", "receiver", "counterparty", "paymentRecipient", "beneficiary"):
+        sub = op.get(subk)
+        if isinstance(sub, dict):
+            for k in keys:
+                u = sub.get(k)
+                if isinstance(u, str) and re.search(r"\d", u):
+                    candidates.append(u.strip())
+    best = ""
+    best_d = 0
+    for c in candidates:
+        d = re.sub(r"\D", "", c)
+        if len(d) >= 10 and len(d) >= best_d:
+            best_d = len(d)
+            best = c
+    return best
+
+
+_STMT_TRANSFER_PRESETS = frozenset(
+    {
+        "sbp",
+        "sovcom",
+        "yandex",
+        "vtb",
+        "sber",
+        "tinkoff",
+        "alfa",
+        "gazprom",
+        "raiffeisen",
+        "psb",
+        "ozon",
+        "home",
+        "rosbank",
+        "rnkb",
+        "mts",
+        "akbars",
+        "unicredit",
+        "yoomoney",
+        "yoo_money",
+        "post",
+        "credit",
+        "zenit",
+        "forbank",
+        "absolut",
+        "renessans",
+        "otp",
+        "avangard",
+        "uralsib",
+        "rshb",
+    }
+)
+
+
+def _coerce_inner_flag(op: dict) -> bool:
+    if not isinstance(op, dict) or "isInner" not in op:
+        return False
+    v = op.get("isInner")
+    if isinstance(v, bool):
+        return v
+    return str(v).lower() in ("true", "1", "yes")
+
+
+def merge_ops_cache_from_bank_op(op_id: str, op: dict) -> bool:
+    """Дополняет кэш полями из повторного ответа API (детальнее описание, телефон, категория)."""
+    cur = operations_cache.get(op_id)
+    if not isinstance(cur, dict) or not isinstance(op, dict):
+        return False
+    changed = False
+
+    def prefer_longer(old: str, new: str, max_len: int) -> tuple[str, bool]:
+        a = (old or "").strip()
+        b = (new or "").strip()
+        if not b:
+            return old, False
+        if not a or len(b) > len(a):
+            return b[:max_len], True
+        return old, False
+
+    phone_new = _statement_extract_transfer_phone(op)
+    if not phone_new:
+        phone_new = str(
+            op.get("phone") or op.get("requisite_phone") or op.get("receiver_phone") or ""
+        ).strip()
+    if phone_new:
+        od = len(re.sub(r"\D", "", str(cur.get("requisite_phone") or cur.get("phone") or "")))
+        nd = len(re.sub(r"\D", "", phone_new))
+        if nd >= 10 and (nd > od or od < 10):
+            s = phone_new[:48]
+            if cur.get("phone") != s or cur.get("requisite_phone") != s:
+                cur["phone"] = s
+                cur["requisite_phone"] = s
+                changed = True
+
+    tnew = str(op.get("title") or op.get("name") or "").strip()
+    tv, c = prefer_longer(str(cur.get("title") or ""), tnew, 400)
+    if c:
+        cur["title"] = tv
+        changed = True
+    sv, c = prefer_longer(str(cur.get("subtitle") or ""), str(op.get("subtitle") or ""), 400)
+    if c:
+        cur["subtitle"] = sv
+        changed = True
+    fv, c = prefer_longer(str(cur.get("formattedDescription") or ""), str(op.get("formattedDescription") or ""), 500)
+    if c:
+        cur["formattedDescription"] = fv
+        changed = True
+    nv, c = prefer_longer(str(cur.get("name") or ""), str(op.get("name") or ""), 200)
+    if c:
+        cur["name"] = nv
+        changed = True
+    mnew = str(
+        op.get("merchantName")
+        or (op.get("merchant") or {}).get("name")
+        or (op.get("merchant") or {}).get("title")
+        or ""
+    ).strip()
+    mv, c = prefer_longer(str(cur.get("merchantName") or ""), mnew, 300)
+    if c:
+        cur["merchantName"] = mv
+        changed = True
+    sgnew = str((op.get("subgroup") or {}).get("name") or "").strip()
+    if sgnew:
+        sgv, c = prefer_longer(str(cur.get("subgroup_name") or ""), sgnew, 200)
+        if c:
+            cur["subgroup_name"] = sgv
+            changed = True
+    gnew = str(op.get("group") or "").strip()
+    if gnew and len(gnew) > len(str(cur.get("op_group") or "")):
+        cur["op_group"] = gnew[:40]
+        changed = True
+    ot_raw = str(op.get("operationType") or "").strip()
+    if ot_raw and len(ot_raw) > len(str(cur.get("operationType") or "")):
+        cur["operationType"] = ot_raw[:40]
+        changed = True
+    tk = operation_row_kind(op)
+    if tk in ("Credit", "Debit") and str(cur.get("type") or "").strip() not in ("Credit", "Debit"):
+        cur["type"] = tk
+        changed = True
+    if "isInner" in op:
+        ib = _coerce_inner_flag(op)
+        if cur.get("is_inner") != ib:
+            cur["is_inner"] = ib
+            changed = True
+    dline = get_op_description(op)
+    if dline:
+        dv, c = prefer_longer(str(cur.get("description") or ""), dline, 400)
+        if c:
+            cur["description"] = dv
+            changed = True
+    bnk = get_op_bank(op)
+    if bnk:
+        bv, c = prefer_longer(str(cur.get("bank") or ""), bnk, 200)
+        if c:
+            cur["bank"] = bv
+            changed = True
+    dnew = get_op_date(op)
+    if dnew and len(dnew) > len(str(cur.get("date") or "")):
+        cur["date"] = dnew
+        changed = True
+    return changed
+
+
+def _statement_manual_or_fake_transfer(op: dict) -> bool:
+    oid = str(op.get("id") or "").strip()
+    if oid.startswith("m_"):
+        return True
+    return op_id_in_fake_history_files(oid)
+
+
+def _statement_panel_phone_for_manual_fake(op: dict) -> str:
+    """Телефон из полей панели / мока (приоритет над эвристикой API)."""
+    for k in ("requisite_phone", "phone", "receiver_phone", "recipientPhone", "pointer", "receipt_phone"):
+        v = str(op.get(k) or "").strip()
+        if v and re.search(r"\d", v):
+            return _statement_normalize_phone(v)
+    return ""
+
+
+def _statement_plausible_ru_mobile(seed: str) -> str:
+    """Стабильный мобильный +79XXXXXXXXX, если в операции нет реквизита (не +73… и т.п.)."""
+    h = hashlib.md5(str(seed or "x").encode("utf-8"), usedforsecurity=False).digest()
+    v = int.from_bytes(h[:4], "big") % (10**9)
+    return "+79" + f"{v:09d}"
+
+
+def _statement_debit_title_other_bank(title: str) -> bool:
+    """Короткий заголовок — название другого банка (перевод по СБП в другой банк)."""
+    t = (title or "").strip().lower()
+    if len(t) > 44:
+        return False
+    keys = (
+        "банк",
+        "sber",
+        "сбер",
+        "альфа",
+        "alfa",
+        "втб",
+        "vtb",
+        "райфф",
+        "raiffeisen",
+        "gazprom",
+        "совком",
+        "тиньк",
+        "tinkoff",
+        "tbank",
+        "почта банк",
+        "псб",
+        "рсхб",
+        "россельх",
+        "мтс",
+        "ак барс",
+        "ozon",
+        "wb ",
+        "вб ",
+        "home credit",
+    )
+    return any(k in t for k in keys)
+
+
+def _statement_debit_bypass_formatted_description_for_phone_block(
+    op: dict,
+    typ: str,
+    inner_b: bool,
+    grp_u: str,
+    sub_lc: str,
+    sg_lc: str,
+    preset: str,
+    title: str,
+    blob_l: str,
+    fd: str,
+) -> bool:
+    """Для переводов не возвращать formattedDescription целиком — ниже соберём строку с телефоном."""
+    if typ != "Debit" or inner_b:
+        return False
+    if grp_u == "TRANSFER" or sg_lc == "переводы" or sub_lc == "переводы":
+        return True
+    if preset in _STMT_TRANSFER_PRESETS:
+        return True
+    fd_l = (fd or "").lower()
+    if any(
+        k in fd_l
+        for k in (
+            "внешн",
+            "сбп",
+            "система быстрых",
+            "по номеру",
+            "номеру телефона",
+        )
+    ):
+        return True
+    if _statement_debit_title_other_bank(title):
+        return True
+    if any(
+        k in blob_l
+        for k in (
+            "внешн",
+            "сбп",
+            "по номеру",
+            "номеру телефона",
+        )
+    ):
+        return True
+    vk = str(op.get("viewKind") or op.get("view") or "").lower()
+    return "phone" in vk
+
+
+def _statement_movement_description(op: dict) -> str:
+    """
+    Текст для колонки «Описание операции» в PDF-выписке — как в образце Выписка.pdf
+    (многострочно: тип перевода / детали / телефон или договор). ФИО контрагентов не включаем.
+    """
+    # В кэше поле type иногда пустое (API отдаёт только operationType=DEBIT и т.п.) — без Credit/Debit
+    # не срабатывает ветка внешнего перевода с телефоном.
+    typ = operation_row_kind(op) if isinstance(op, dict) else None
+    if typ not in ("Credit", "Debit"):
+        typ = str((op.get("type") or "") if isinstance(op, dict) else "").strip()
+    if typ not in ("Credit", "Debit") and isinstance(op, dict):
+        ot = str(op.get("operationType") or "").strip().upper()
+        if ot == "DEBIT":
+            typ = "Debit"
+        elif ot == "CREDIT":
+            typ = "Credit"
+    if typ not in ("Credit", "Debit"):
+        typ = "Debit"
+    if typ == "Credit":
+        return "Пополнение. Система\nбыстрых платежей"
+
+    title = (op.get("title") or op.get("name") or "").strip()
+    sub = (op.get("subtitle") or "").strip()
+    desc = (op.get("description") or "").strip()
+    bank = (op.get("bank") or "").strip()
+    preset = (op.get("bank_preset") or "").strip().lower()
+    raw_phone = _statement_extract_transfer_phone(op)
+    sg_raw = op.get("subgroup") if isinstance(op.get("subgroup"), dict) else {}
+    sgname = (op.get("subgroup_name") or (sg_raw.get("name") if isinstance(sg_raw, dict) else "") or "").strip()
+    mer_line = (op.get("merchantName") or "").strip()
+    if not mer_line and isinstance(op.get("merchant"), dict):
+        mer_line = (
+            str((op.get("merchant") or {}).get("name") or (op.get("merchant") or {}).get("title") or "")
+        ).strip()
+    grp_u = str(op.get("op_group") or op.get("group") or "").strip().upper()
+    inner_b = (_coerce_inner_flag(op) if isinstance(op, dict) else False) or bool(op.get("is_inner"))
+
+    fd = (op.get("formattedDescription") or "").strip()
+    msg = (op.get("message") or "").strip()
+    purp = (op.get("purpose") or "").strip()
+    # В кэше Тинька «внешний перевод по номеру телефона» часто только в formattedDescription;
+    # без этого strong_xfer/phone_xfer не срабатывают после bypass fd.
+    blob_l = f"{title}\n{sub}\n{desc}\n{bank}\n{sgname}\n{mer_line}\n{fd}\n{msg}\n{purp}".lower()
+    sub_lc = (sub or "").strip().lower()
+    sg_lc = (sgname or "").strip().lower()
+
+    if fd and fd not in ("Переводы", "Transfers"):
+        ph_pre = _statement_normalize_phone(raw_phone)
+        skip_fd = (
+            not inner_b
+            and len(re.sub(r"\D", "", ph_pre)) >= 11
+            and (
+                grp_u == "TRANSFER"
+                or sg_lc == "переводы"
+                or sub_lc == "переводы"
+                or preset in _STMT_TRANSFER_PRESETS
+            )
+        )
+        if not skip_fd and not _statement_debit_bypass_formatted_description_for_phone_block(
+            op, typ, inner_b, grp_u, sub_lc, sg_lc, preset, title, blob_l, fd
+        ):
+            fd_lc = (fd or "").strip().lower()
+            if not (typ == "Debit" and fd_lc in ("операция", "operation")):
+                fd2 = _statement_strip_fio_from_text(fd)
+                if len(fd2) > 14:
+                    return fd2[:500]
+                if len(fd2) >= 3:
+                    return fd2[:500]
+
+    ph = _statement_normalize_phone(raw_phone)
+    if len(re.sub(r"\D", "", ph)) < 11:
+        m = _STATEMENT_PHONE_RE.search(f"{title} {desc} {sub}")
+        if m:
+            ph = _statement_normalize_phone(m.group(0))
+    if len(re.sub(r"\D", "", ph)) < 11:
+        m2 = _STATEMENT_PHONE_RE.search(
+            f"{op.get('formattedDescription') or ''} {op.get('message') or ''} {op.get('purpose') or ''}"
+        )
+        if m2:
+            ph = _statement_normalize_phone(m2.group(0))
+    if typ == "Debit" and len(re.sub(r"\D", "", ph)) < 11:
+        m3 = _STATEMENT_PHONE_RE.search(f"{title} {desc} {bank}")
+        if m3:
+            ph = _statement_normalize_phone(m3.group(0))
+    if typ == "Debit" and not inner_b:
+        merchantish = any(
+            x in blob_l
+            for x in (
+                "телеком",
+                "магаз",
+                "жкх",
+                "коммун",
+                "услуг",
+                "оплат",
+                "покуп",
+                "подписк",
+                "ozon",
+                "wildberries",
+                "каршер",
+                "такси",
+                "аптек",
+                "рестор",
+                "кафе",
+                "супермарк",
+                "перекрёст",
+                "пятёроч",
+                "м видео",
+                "dns ",
+                "светофор",
+            )
+        )
+        vk = str(op.get("viewKind") or op.get("view") or "").lower()
+        strong_xfer = (
+            "внешн" in blob_l
+            or "сбп" in blob_l
+            or "по номеру" in blob_l
+            or "номеру телефона" in blob_l
+            or preset == "sbp"
+            or ("перевод" in blob_l and "телеф" in blob_l)
+            or "phone" in vk
+            or sub_lc == "переводы"
+            or sg_lc == "переводы"
+            or _statement_debit_title_other_bank(title)
+        )
+        soft_xfer = (
+            grp_u == "TRANSFER"
+            or sg_lc == "переводы"
+            or sub_lc == "переводы"
+            or preset in _STMT_TRANSFER_PRESETS
+        )
+        phone_xfer = strong_xfer or (bool(raw_phone) and soft_xfer)
+        if phone_xfer and not merchantish:
+            phx = ph
+            if len(re.sub(r"\D", "", phx)) < 11 and _statement_manual_or_fake_transfer(op):
+                phx = _statement_panel_phone_for_manual_fake(op)
+            if len(re.sub(r"\D", "", phx)) < 11:
+                phx = _statement_plausible_ru_mobile(str(op.get("id") or title or desc or bank))
+            return f"Внешний перевод по\nномеру телефона\n{phx}"[:500]
+
+    if "внутрен" in blob_l and "договор" in blob_l:
+        m = re.search(r"договор[а]?\s*(\d{10})", f"{title} {desc} {sub}", re.I)
+        if m:
+            return f"Внутренний перевод на\nдоговор {m.group(1)}"
+    if "внутрен" in blob_l:
+        nums = _STATEMENT_CONT_10_RE.findall(f"{title} {desc} {sub}")
+        if nums:
+            return f"Внутренний перевод на\nдоговор {nums[-1]}"
+
+    if "внутрибанк" in blob_l or "с договор" in blob_l:
+        m = re.search(r"с\s+договор[а]?\s*(\d{10})", f"{title} {desc} {sub}", re.I)
+        if m:
+            return f"Внутрибанковский перевод\nс договора {m.group(1)}"
+        nums = _STATEMENT_CONT_10_RE.findall(f"{title} {desc} {sub}")
+        if nums:
+            return f"Внутрибанковский перевод\nс договора {nums[0]}"
+
+    if typ == "Debit" and mer_line and "(" in mer_line and len(mer_line) >= 14:
+        if len(mer_line) > len(title) + 4:
+            return mer_line[:500]
+
+    parts: list[str] = []
+    for p in (title, sub, desc):
+        if not p:
+            continue
+        if _statement_looks_like_fio_only(p) or _statement_line_looks_bank_only(p):
+            continue
+        if not any(p in x or x in p for x in parts):
+            parts.append(p)
+    if mer_line and typ == "Debit" and mer_line not in " ".join(parts) and "(" not in mer_line:
+        if len(mer_line) > len(title) + 3:
+            parts.append(mer_line)
+    if parts:
+        return "\n".join(parts)[:500]
+    tail = (op.get("description") or op.get("subtitle") or op.get("merchantName") or "Операция").strip()
+    if _statement_looks_like_fio_only(tail) or _statement_line_looks_bank_only(tail):
+        tail = (op.get("subtitle") or op.get("merchantName") or "").strip()
+    if _statement_looks_like_fio_only(tail) or _statement_line_looks_bank_only(tail):
+        tail = (op.get("merchantName") or "").strip()
+    if _statement_looks_like_fio_only(tail) or _statement_line_looks_bank_only(tail) or not tail:
+        tail = "Операция"
+    return tail[:500]
+
+
+def _statement_cache_row_description(op: dict) -> str:
+    return _statement_movement_description(op)
+
+
+def enrich_statement_movement_descriptions(rows: list[dict]) -> list[dict]:
+    """Перед PDF пересчитать описание из полного op (title/subtitle/merchant и т.д.), а не из устаревшей строки в rows."""
+    out: list[dict] = []
+    for r in rows:
+        oid = str(r.get("id") or "").strip()
+        op = None
+        if oid and oid in manual_operations:
+            op = manual_operations[oid]
+        else:
+            fh = _fake_history_record_by_id(oid)
+            if fh:
+                op = fh
+            elif oid and oid in operations_cache:
+                op = operations_cache[oid]
+        if op:
+            rr = dict(r)
+            rr["description"] = _statement_movement_description(op)[:500]
+            out.append(rr)
+        else:
+            out.append(r)
+    return out
+
+
+def gather_statement_movements(from_ms: int, to_ms: int) -> list[dict]:
+    """Операции из кэша банка, fake_history и ручных в интервале [from_ms, to_ms].
+
+    Одна запись на id: сначала кэш, затем мок (last_transfer), затем ручная — ручная/мок
+    перекрывают кэш при совпадении id, чтобы переводы из панели не пропадали из выписки.
+    """
+    ensure_manual_operations_fresh()
+    rows_by_id: dict[str, dict] = {}
+
+    def put_row(op_id: str, ms: int, date_display: str, desc: str, amount: float, typ: str) -> None:
+        op_id = str(op_id or "").strip()
+        if not op_id or op_id in hidden_operations:
+            return
+        if ms < from_ms or ms > to_ms:
+            return
+        rows_by_id[op_id] = {
+            "id": op_id,
+            "ms": ms,
+            "date_display": date_display,
+            "description": (desc or "Операция")[:500],
+            "amount": float(amount),
+            "type": (typ or "Debit").strip(),
+        }
+
+    for op_id, op in operations_cache.items():
+        ds = (op.get("date") or "").strip()
+        ms = operation_time_ms(op) if isinstance(op, dict) else 0
+        if ms <= 0:
+            ms = date_str_to_millis(ds) if ds else 0
+        amt = float(op.get("amount") or 0)
+        typ = (op.get("type") or "Debit").strip()
+        put_row(op_id, ms, ds or millis_to_bank_date_str(ms), _statement_cache_row_description(op), abs(amt), typ)
+
+    for path in _last_transfer_json_paths():
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        for fo in data.get("fake_history") or []:
+            if not isinstance(fo, dict):
+                continue
+            oid = str(fo.get("id") or "").strip()
+            if not oid:
+                continue
+            ms = operation_time_ms(fo)
+            if ms <= 0:
+                ms = parse_bank_date_str_to_ms((fo.get("date_full") or "").strip()) or 0
+            if ms <= 0:
+                ms = date_str_to_millis((fo.get("date_full") or "").strip())
+            ds = (fo.get("date_full") or "").strip() or get_op_date(fo) or millis_to_bank_date_str(ms)
+            amt = float(get_op_amount(fo))
+            typ = (fo.get("type") or "Debit").strip()
+            desc = _statement_movement_description(fo)
+            if len((desc or "").strip()) < 12:
+                alt_raw = (get_op_description(fo) or _fake_bank_display_name(fo) or "").strip()
+                alt = _statement_strip_fio_from_text(alt_raw) or alt_raw.strip()
+                if len(alt) >= 3 and not _statement_looks_like_fio_only(alt):
+                    desc = alt
+            put_row(oid, ms, ds, desc, abs(amt), typ)
+
+    for op_id, op in manual_operations.items():
+        ms = operation_time_ms(op)
+        if ms <= 0:
+            ms = date_str_to_millis(op.get("date") or "")
+        ds = (op.get("date") or "").strip() or millis_to_bank_date_str(ms)
+        amt = float(op.get("amount") or 0)
+        typ = (op.get("type") or "Debit").strip()
+        put_row(op_id, ms, ds, _statement_movement_description(op), abs(amt), typ)
+
+    rows = sorted(rows_by_id.values(), key=lambda r: r["ms"], reverse=True)
+    return rows
+
+
+def generate_statement_pdf_for_period(date_from: str, date_to: str) -> Optional[tuple[str, str]]:
+    """
+    Создаёт PDF-выписку за период. Возвращает (абсолютный путь, имя файла) или None.
+    """
+    global statement_generation_error
+    statement_generation_error = ""
+    from_ms, to_ms = parse_statement_period_iso_dates(date_from, date_to)
+    movements = enrich_statement_movement_descriptions(gather_statement_movements(from_ms, to_ms))
+    out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_statements")
+    os.makedirs(out_dir, exist_ok=True)
+    safe_from = (date_from or "from").replace(":", "")[:10]
+    safe_to = (date_to or "to").replace(":", "")[:10]
+    fname = f"statement_{safe_from}_{safe_to}_{uuid.uuid4().hex[:8]}.pdf"
+    path = os.path.join(out_dir, fname)
+    try:
+        func.generate_account_statement_pdf(movements, from_ms, to_ms, path, controller.config)
+    except Exception as ex:
+        statement_generation_error = str(ex) or repr(ex)
+        print(f"[history] generate_statement_pdf_for_period: {ex}")
+        return None
+    if not os.path.isfile(path):
+        statement_generation_error = "Файл выписки не создан после генерации."
+        return None
+    return path, fname
+
+
 def build_operations_api_response():
     """Единый JSON для GET /api/operations (mitm и отдельный run.py / panel_server)."""
     ensure_manual_operations_fresh()
@@ -2662,7 +3477,8 @@ def build_operations_api_response():
             "card_number": op.get("card_number") or "",
             "manual": True,
         })
-    skip_fake = set(operations_cache.keys()) | set(manual_operations.keys())
+    # Мок не отбрасываем из‑за id в manual_operations — разные сущности; только дубль с кэшем банка.
+    skip_fake = set(operations_cache.keys())
     month_ops.extend(_fake_transfer_ops_for_panel(skip_fake, month_only=not show_all))
     month_ops.sort(key=lambda x: (x.get("sort_ts", 0), 1 if x.get("manual") else 0), reverse=True)
     display_income, display_expense, real_inc_cnt, real_exp_cnt = get_panel_chart_display_totals()
@@ -2732,22 +3548,57 @@ def response(flow: http.HTTPFlow) -> None:
             ops = extract_operations(data)
             if ops:
                 new_ops = 0
+                merged = 0
                 for op in ops:
-                    op_id = op.get('id')
-                    if not op_id or op_id in operations_cache or op_id in manual_operations:
+                    op_id = str(op.get("id") or "").strip()
+                    if not op_id or op_id in manual_operations:
                         continue
+                    if op_id in operations_cache:
+                        if merge_ops_cache_from_bank_op(op_id, op):
+                            merged += 1
+                        continue
+                    phone_pick = _statement_extract_transfer_phone(op)
+                    if not phone_pick:
+                        phone_pick = str(
+                            op.get("phone") or op.get("requisite_phone") or op.get("receiver_phone") or ""
+                        ).strip()
+                    inner_v = op.get("isInner")
+                    is_in = (
+                        bool(inner_v)
+                        if isinstance(inner_v, bool)
+                        else str(inner_v or "").lower() in ("true", "1", "yes")
+                    ) if "isInner" in op else False
                     operations_cache[op_id] = {
                         "id": op_id,
                         "date": get_op_date(op),
                         "amount": get_op_amount(op),
-                        "type": get_op_type(op),
+                        "type": get_op_type(op) or "Debit",
+                        "operationType": str(op.get("operationType") or "")[:40],
                         "description": get_op_description(op),
-                        "bank": get_op_bank(op)
+                        "bank": get_op_bank(op),
+                        "title": str(op.get("title") or op.get("name") or "")[:400],
+                        "subtitle": str(op.get("subtitle") or "")[:400],
+                        "formattedDescription": str(op.get("formattedDescription") or "")[:500],
+                        "name": str(op.get("name") or "")[:200],
+                        "phone": phone_pick[:48],
+                        "requisite_phone": phone_pick[:48],
+                        "merchantName": str(
+                            op.get("merchantName")
+                            or (op.get("merchant") or {}).get("name")
+                            or (op.get("merchant") or {}).get("title")
+                            or ""
+                        )[:300],
+                        "subgroup_name": str((op.get("subgroup") or {}).get("name") or "")[:200],
+                        "op_group": str(op.get("group") or "")[:40],
+                        "is_inner": is_in,
                     }
                     new_ops += 1
                 if new_ops:
                     print(f"[history] Добавлено {new_ops} новых операций")
                     clean_old_ops()
+                if new_ops or merged:
+                    if merged and bank_debug_enabled():
+                        print(f"[history] Обновлено из повторного ответа: {merged} операций")
                     last_sync_time = datetime.now()
 
         filtered = apply_hidden_operations_filter(data, url, referer, req_text)
@@ -2770,7 +3621,13 @@ def request(flow: http.HTTPFlow) -> None:
 
     cors_json = {"Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*"}
 
-    if flow.request.method == "OPTIONS" and path_only in ("/api/panel_income_expense", "/api/hide_all_operations", "/api/show_all_operations"):
+    if flow.request.method == "OPTIONS" and path_only in (
+        "/api/panel_income_expense",
+        "/api/hide_all_operations",
+        "/api/show_all_operations",
+        "/api/statement/generate",
+        "/api/statement/pdf",
+    ):
         flow.response = http.Response.make(
             204,
             b"",
@@ -2780,6 +3637,67 @@ def request(flow: http.HTTPFlow) -> None:
                 "Access-Control-Allow-Headers": "Content-Type",
             },
         )
+        return
+
+    if flow.request.method == "GET" and path_only == "/api/statement/pdf":
+        qs = parse_qs(urlparse(path).query)
+        token = (qs.get("token") or [""])[0].strip()
+        dl = (qs.get("download") or ["0"])[0].strip().lower() in ("1", "true", "yes")
+        pdf_abs = resolve_statement_pdf_token(token)
+        if not pdf_abs:
+            flow.response = http.Response.make(
+                404,
+                json.dumps({"error": "not found or expired"}, ensure_ascii=False).encode("utf-8"),
+                {"Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*"},
+            )
+            return
+        try:
+            with open(pdf_abs, "rb") as _pf:
+                data = _pf.read()
+        except OSError:
+            flow.response = http.Response.make(500, b"read error")
+            return
+        disp = 'attachment; filename="statement.pdf"' if dl else 'inline; filename="statement.pdf"'
+        h = {
+            "Content-Type": "application/pdf",
+            "Access-Control-Allow-Origin": "*",
+            "Content-Disposition": disp,
+            "Content-Length": str(len(data)),
+        }
+        flow.response = http.Response.make(200, data, h)
+        return
+
+    if flow.request.method == "POST" and path_only == "/api/statement/generate":
+        cors = {"Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*"}
+        try:
+            body = json.loads(flow.request.text or "{}")
+            date_from = (body.get("date_from") or body.get("from") or "").strip()
+            date_to = (body.get("date_to") or body.get("to") or "").strip()
+            got = generate_statement_pdf_for_period(date_from, date_to)
+            if not got:
+                flow.response = http.Response.make(
+                    500,
+                    json.dumps({"error": "generation failed"}, ensure_ascii=False).encode("utf-8"),
+                    cors,
+                )
+                return
+            pdf_abs, fname = got
+            token = register_statement_pdf_token(pdf_abs)
+            url = f"/api/statement/pdf?token={token}"
+            flow.response = http.Response.make(
+                200,
+                json.dumps(
+                    {"ok": True, "url": url, "filename": fname, "token": token},
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+                cors,
+            )
+        except Exception as e:
+            flow.response = http.Response.make(
+                400,
+                json.dumps({"error": str(e)}, ensure_ascii=False).encode("utf-8"),
+                cors,
+            )
         return
 
     if path_only == "/api/panel_income_expense" and flow.request.method == "GET":
@@ -2875,6 +3793,7 @@ def request(flow: http.HTTPFlow) -> None:
             op_data = {
                 "id": op_id,
                 "date": date_str,
+                "operationTime": manual_operations[op_id].get("operationTime"),
                 "amount": amount,
                 "type": op_type,
                 "bank": bank or bank_preset.title(),

@@ -148,6 +148,38 @@ class PanelHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(pdf_bytes)
             return
+
+        parsed_st = urlparse(self.path)
+        if parsed_st.path == "/api/statement/pdf":
+            qs = parse_qs(parsed_st.query)
+            token = (qs.get("token") or [""])[0].strip()
+            dl = (qs.get("download") or ["0"])[0].strip().lower() in ("1", "true", "yes")
+            pdf_abs = history.resolve_statement_pdf_token(token)
+            if not pdf_abs:
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps({"error": "not found or expired"}, ensure_ascii=False).encode("utf-8")
+                )
+                return
+            try:
+                pdf_bytes = open(pdf_abs, "rb").read()
+            except OSError:
+                self.send_response(500)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                return
+            disp = 'attachment; filename="statement.pdf"' if dl else 'inline; filename="statement.pdf"'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/pdf")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Disposition", disp)
+            self.send_header("Content-Length", str(len(pdf_bytes)))
+            self.end_headers()
+            self.wfile.write(pdf_bytes)
+            return
         
         self.send_error(404, "Not Found")
     
@@ -193,6 +225,10 @@ class PanelHandler(BaseHTTPRequestHandler):
 
         if self.path == "/api/show_all_operations":
             self.handle_show_all_operations()
+            return
+
+        if self.path == "/api/statement/generate":
+            self.handle_statement_generate(body)
             return
         
         self.send_error(404, "Not Found")
@@ -447,6 +483,33 @@ class PanelHandler(BaseHTTPRequestHandler):
     def handle_show_all_operations(self):
         history.hidden_operations.clear()
         self.send_json_cors({"status": "ok"})
+
+    def handle_statement_generate(self, body):
+        try:
+            data = json.loads(body or "{}")
+            date_from = (data.get("date_from") or data.get("from") or "").strip()
+            date_to = (data.get("date_to") or data.get("to") or "").strip()
+            got = history.generate_statement_pdf_for_period(date_from, date_to)
+            if not got:
+                err = getattr(history, "statement_generation_error", "") or "generation failed"
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps({"error": err}, ensure_ascii=False).encode("utf-8")
+                )
+                return
+            pdf_abs, fname = got
+            token = history.register_statement_pdf_token(pdf_abs)
+            url = f"/api/statement/pdf?token={token}"
+            self.send_json_cors({"ok": True, "url": url, "filename": fname, "token": token})
+        except Exception as e:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(e)}, ensure_ascii=False).encode("utf-8"))
     
     def random_data(self):
         import random
