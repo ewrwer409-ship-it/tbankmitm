@@ -10,6 +10,8 @@ _BANK_KEYS = (
     "tinkoff",
     "t-co.ru",
     "tinkoffbank",
+    # Встраиваемый банк / iOS (Drive Transit и др.): api.*.t-bank-app.ru — без суффикса «tbank» подряд.
+    "t-bank-app",
 )
 
 
