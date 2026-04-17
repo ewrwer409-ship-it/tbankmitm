@@ -1202,24 +1202,27 @@ def _draw_wrapped_description(
 def _first_body_row_y0(
     page: fitz.Page, clip: fitz.Rect, first_date: str, page_index: int, lay: _ColLayout
 ) -> float:
-    """Верх первой строки данных (как у search_for даты в шаблоне), до заливки таблицы."""
+    """
+    Верх первой строки данных (y первой ячейки даты в колонке), до заливки таблицы.
+    Важно: брать самый верхний hit среди всех шаблонных дат — иначе первая игла (дата текущей
+    операции) может совпасть только со строкой ниже по странице, и сверху остаётся белый разрыв
+    (часто на 3–4-й странице продолжения).
+    """
     needles: List[str] = []
     if first_date:
         needles.append(first_date)
     needles.extend(("04.04.2026", "14.04.2026", "24.03.2026", "12.04.2026"))
     seen: set[str] = set()
+    hits_all: List[fitz.Rect] = []
     for nd in needles:
         if not nd or nd in seen:
             continue
         seen.add(nd)
-        # clip.y0≈верх зоны данных; на стр. продолжения первая строка может быть чуть выше clip — нельзя отсекать «> clip.y0+1».
-        hits = [
-            r
-            for r in page.search_for(nd, quads=False)
-            if r.y0 >= clip.y0 - 2.0 and r.x0 < clip.x0 + 140 and r.y0 < clip.y1 - 70.0
-        ]
-        if hits:
-            return float(min(h.y0 for h in hits))
+        for r in page.search_for(nd, quads=False):
+            if r.y0 >= clip.y0 - 2.0 and r.x0 < clip.x0 + 140 and r.y0 < clip.y1 - 70.0:
+                hits_all.append(r)
+    if hits_all:
+        return float(min(h.y0 for h in hits_all))
     pad = max(8.0, float(lay.row_h_first) * 0.75)
     return float(clip.y0) + pad
 

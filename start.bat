@@ -13,6 +13,7 @@ echo.
 echo ============================================================
 echo   Listen: 127.0.0.1:8082   proxy + panel, same process
 echo   Panel:  http://127.0.0.1:8082/admin
+echo   Traffic host log: traffic_hosts.log (addon traffic_log_hosts.py)
 echo   Keep this window open. Close window = stop. Ctrl+C = stop.
 echo ============================================================
 echo.

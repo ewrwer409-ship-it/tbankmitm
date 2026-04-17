@@ -3,6 +3,8 @@
 1) Один раз: запустите setup.bat (создаётся venv, ставятся mitmproxy и pymupdf для transfer.py — import fitz).
    Если venv уже есть, но пишет "mitmproxy not installed" или "No module named 'fitz'" — запустите install_mitm.bat
 
+Фильтр под Drive Transit / iOS: блок ios_app в config.json (bundle_id, user_agent_markers, gate_mode). Режим relaxed (по умолчанию): подходит запрос к *.tbank.ru/tinkoff, если bundle/markers есть в заголовках ИЛИ User-Agent похож на нативный iOS (CFNetwork+Darwin без браузерного Safari/WebKit-паттерна). strict — только явные строки в заголовках. off — только хост, без клиентского фильтра. Env: TBANKMITM_IOS_GATE_MODE, TBANKMITM_ONLY_USER_AGENT_CONTAINS, TBANKMITM_CLIENT_GATE_OFF=1.
+
 Веб mybank / дубли карточек: history.py режет вставку для браузера (User-Agent) на api.*.tbank.ru и т.п., если в URL нет явных признаков ленты (graphql, history, operation, …).
   Вернуть старое поведение (риск дублей): BANK_WEB_INJECT_ALL=1
   Только GraphQL без фильтра по operationName: BANK_GRAPHQL_INJECT_ALL=1
@@ -20,6 +22,18 @@
 3) Панель: http://127.0.0.1:8082/admin
 
 4) Телефон: прокси на IP компьютера, порт 8082 + сертификат mitm (через mitm.it в браузере с прокси).
+   Для iPhone с другого устройства в Wi‑Fi: на ПК запустите start_listen_lan.bat (слушает 0.0.0.0:8082).
+   В узле Wi‑Fi iPhone: Настройки → Wi‑Fi → (i) у сети → Настроить прокси → Вручную → Сервер = IP ПК,
+   Порт = 8082. Затем в Safari откройте http://mitm.it и установите сертификат для iOS.
+   Лог куда ходит трафик: файл traffic_hosts.log в этой папке (и дубль в консоль, если задано TBANKMITM_TRAFFIC_STDOUT=1).
+   Колонки: время UTC, connect|tls_sni|http, IP клиента, хост, порт, детали (для http — метод и путь).
+   При certificate pinning тело HTTPS может не расшифровываться, но строки connect и tls_sni обычно всё равно полезны.
+
+5) Bundle ID для правил VPN/MDM (через публичный iTunes Lookup по числовому id из ссылки App Store):
+   В ссылке вида https://apps.apple.com/.../idXXXXXXXX — это XXXXXXXX.
+   Пример PowerShell: Invoke-RestMethod 'https://itunes.apple.com/lookup?id=6760469916'
+   На момент проверки: Drive Transit → bundleId com.delivery.drive.almagul.daurbayeva (id 6760469916).
+   Для EasyCatch / T Catch id в сторе менялся; если lookup по id пустой — приложение снято с витрины, смотрите id в актуальной ссылке.
 
 Почему были ошибки «is not recognized»:
 Файлы .bat были в UTF-8 с кириллицей. Старый cmd.exe читает их в кодировке OEM и выполняет обрывки текста как команды.
