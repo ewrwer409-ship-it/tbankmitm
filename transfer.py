@@ -519,15 +519,38 @@ def _payment_commission_ok_dict() -> dict:
     }
 
 
+# Вспомогательные запросы сценария СБП/перевода; ошибка на любом из них даёт модалку «Не удалось загрузить».
+_TRANSFER_AUX_URL_MARKERS = (
+    "get_requisites",
+    "payment_commission",
+    "providers/find",
+    "phonetransfer",
+    "phone-transfer",
+    "money-transfer",
+    "internal-transfer",
+    "outgoingtransfer",
+    "incomingtransfer",
+    "multi_transfer",
+    "transfer_session",
+    "money-session",
+    "cash-flow",
+    "cash_flow",
+)
+
+
+def _url_matches_transfer_aux(url_lower: str) -> bool:
+    return any(m in url_lower for m in _TRANSFER_AUX_URL_MARKERS)
+
+
 def _neutralize_transfer_aux_http_errors(flow: http.HTTPFlow, url_lower: str) -> bool:
     """
-    Если сервер вернул 4xx/5xx на get_requisites или payment_commission, клиент часто
+    Если сервер вернул 4xx/5xx на вспомогательных API перевода, клиент часто
     показывает «Не удалось загрузить данные», хотя остальное (баланс, анкеты) уже есть.
     """
     sc = flow.response.status_code
     if sc < 400:
         return False
-    if "get_requisites" not in url_lower and "payment_commission" not in url_lower:
+    if not _url_matches_transfer_aux(url_lower):
         return False
     flow.response.status_code = 200
     flow.response.headers["Content-Type"] = "application/json; charset=utf-8"
@@ -1073,6 +1096,14 @@ def response(flow: http.HTTPFlow) -> None:
         if "gtech-tax-deduction" in ul or "tax-deduction" in ul:
             flow.response.status_code = 200
             flow.response.text = '{"resultCode":"OK","payload":{}}'
+            return
+        if "payment_commission" in ul:
+            flow.response.status_code = 200
+            flow.response.text = json.dumps(_payment_commission_ok_dict(), ensure_ascii=False)
+            return
+        if _url_matches_transfer_aux(ul):
+            flow.response.status_code = 200
+            flow.response.text = '{"resultCode":"OK","payload":null}'
             return
     if _neutralize_transfer_aux_http_errors(flow, ul):
         return

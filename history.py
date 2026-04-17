@@ -236,9 +236,16 @@ def apply_histogram_summary_totals(data: dict, income: float, expense: float) ->
         intervals = block.get("intervals")
         if not isinstance(intervals, list) or old_total <= 0 or new_total <= 0:
             return
+        ratio = new_total / old_total if old_total > 0 else 1.0
         for interval in intervals:
             if not isinstance(interval, dict):
                 continue
+            int_summ = interval.get("summary")
+            if isinstance(int_summ, dict) and "value" in int_summ:
+                try:
+                    int_summ["value"] = round(float(int_summ["value"]) * ratio, 2)
+                except (TypeError, ValueError):
+                    pass
             agg = interval.get("aggregated")
             if not isinstance(agg, list):
                 continue
@@ -250,9 +257,7 @@ def apply_histogram_summary_totals(data: dict, income: float, expense: float) ->
                     and "value" in cat["amount"]
                 ):
                     try:
-                        cat["amount"]["value"] = round(
-                            float(cat["amount"]["value"]) * new_total / old_total, 2
-                        )
+                        cat["amount"]["value"] = round(float(cat["amount"]["value"]) * ratio, 2)
                     except (TypeError, ValueError):
                         pass
 
@@ -278,10 +283,18 @@ _FRAUD_BANNER_MARKERS = (
     "подозрительные операции",
     "подозрительная операция",
     "подозрительную операцию",
+    "подозрительная активность",
     "временно заблокировали",
     "давайте проверим",
     "проверим ее в чате",
     "проверим её в чате",
+    "антимошенничес",
+    "мошенничес",
+    "ограничили операции",
+    "ограничили переводы",
+    "переводы временно",
+    "нестандартную операцию",
+    "нестандартная операция",
 )
 
 
@@ -312,7 +325,17 @@ def neutralize_security_banner_strings(obj) -> bool:
                 if isinstance(x, dict):
                     t = " ".join(
                         str(x.get(key) or "")
-                        for key in ("title", "text", "message", "subtitle", "description", "primaryText")
+                        for key in (
+                            "title",
+                            "text",
+                            "message",
+                            "subtitle",
+                            "description",
+                            "primaryText",
+                            "bodyText",
+                            "hint",
+                            "richTitle",
+                        )
                     )
                     if _string_matches_fraud_banner(t):
                         node.pop(i)
@@ -322,6 +345,41 @@ def neutralize_security_banner_strings(obj) -> bool:
                 i += 1
 
     walk(obj, 0)
+    return changed
+
+
+def neutralize_aml_ui_flags(obj) -> bool:
+    """Сбрасывает явные boolean-флаги «показать баннер безопасности/антифрод» в JSON ответов."""
+    changed = False
+
+    def walk(node):
+        nonlocal changed
+        if isinstance(node, dict):
+            for k, v in list(node.items()):
+                if v is True:
+                    lk = str(k).lower()
+                    if (
+                        "securitybanner" in lk
+                        or "showaml" in lk
+                        or "fraudbanner" in lk
+                        or "amlalert" in lk
+                        or "risksnackbar" in lk
+                        or lk in ("showfraudwarning", "displaysafetynotice", "needsantifraudcheck")
+                    ):
+                        node[k] = False
+                        changed = True
+                elif isinstance(v, dict):
+                    walk(v)
+                elif isinstance(v, list):
+                    for x in v:
+                        if isinstance(x, dict):
+                            walk(x)
+        elif isinstance(node, list):
+            for x in node:
+                if isinstance(x, dict):
+                    walk(x)
+
+    walk(obj)
     return changed
 
 
@@ -3798,6 +3856,8 @@ def response(flow: http.HTTPFlow) -> None:
             if neutralize_is_suspicious_tree(data):
                 security_patched = True
             if neutralize_security_banner_strings(data):
+                security_patched = True
+            if neutralize_aml_ui_flags(data):
                 security_patched = True
 
         if not ctx_stmt:
