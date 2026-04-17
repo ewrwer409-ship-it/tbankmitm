@@ -391,6 +391,83 @@ def safe_json(text):
         return None
 
 
+def _is_tbank_app_embedded_url(url: str) -> bool:
+    return "t-bank-app" in (url or "").lower()
+
+
+def _is_v1_pay_url(url: str) -> bool:
+    """Веб: /api/common/v1/pay | Встраиваемый клиент: …/v1/pay на *.t-bank-app.ru."""
+    u = (url or "").lower()
+    if "/api/common/v1/pay" in u:
+        return True
+    return _is_tbank_app_embedded_url(u) and "/v1/pay" in u
+
+
+def _is_v1_operations_feed_url(url: str) -> bool:
+    """Лента операций (не гистограмма / не категории)."""
+    u = (url or "").lower()
+    if "/api/common/v1/operations" in u:
+        return True
+    if not _is_tbank_app_embedded_url(u):
+        return False
+    if "operations_histogram" in u or "operations_category" in u:
+        return False
+    return "/v1/operations" in u
+
+
+def _parse_v1_pay_request_body(body_text: str) -> tuple:
+    """Форма payParameters= (mybank) или JSON тела встроенного POST /v1/pay."""
+    amount, phone, name = 0.0, None, None
+    raw = body_text or ""
+    if "payParameters=" in raw:
+        try:
+            param = raw.split("payParameters=")[1].split("&")[0]
+            data = safe_json(unquote(param))
+            if data:
+                amount = float(data.get("moneyAmount") or data.get("amount") or 0)
+                phone = (data.get("providerFields") or {}).get("pointer")
+                name = (data.get("providerFields") or {}).get("maskedFIO")
+        except Exception:
+            pass
+        return amount, phone, name
+    t = raw.strip()
+    if not t.startswith("{"):
+        return amount, phone, name
+    try:
+        data = json.loads(t)
+    except Exception:
+        return amount, phone, name
+
+    def grab(d):
+        nonlocal amount, phone, name
+        if not isinstance(d, dict):
+            return
+        for key in ("moneyAmount", "amount", "totalAmount", "payAmount", "sum"):
+            block = d.get(key)
+            if isinstance(block, dict) and block.get("value") is not None:
+                try:
+                    amount = float(block["value"])
+                except (TypeError, ValueError):
+                    pass
+            elif isinstance(block, (int, float)):
+                try:
+                    amount = float(block)
+                except (TypeError, ValueError):
+                    pass
+        pf = d.get("providerFields") or d.get("recipient") or {}
+        if isinstance(pf, dict):
+            phone = pf.get("pointer") or pf.get("phone") or pf.get("msisdn") or phone
+            name = pf.get("maskedFIO") or pf.get("name") or name
+        phone = d.get("phone") or d.get("pointer") or phone
+        name = d.get("maskedFIO") or d.get("recipientName") or name
+
+    grab(data)
+    nested = data.get("payload")
+    if isinstance(nested, dict):
+        grab(nested)
+    return amount, phone, name
+
+
 def _handle_payment_commission_request(flow: http.HTTPFlow) -> None:
     """Как transfer2: комиссия 0 и предаём merchant/банк в transfer_data до pay."""
     global _fake_payment_done
@@ -922,7 +999,7 @@ def response(flow: http.HTTPFlow) -> None:
         return
 
     ct = (flow.response.headers.get("content-type") or "").lower()
-    if "/api/common/v1/operations" in url and "application/json" in ct:
+    if _is_v1_operations_feed_url(url_raw) and "application/json" in ct:
         try:
             data = json.loads(flow.response.text)
             if isinstance(data, dict) and isinstance(data.get("payload"), list):
@@ -941,7 +1018,7 @@ def response(flow: http.HTTPFlow) -> None:
     if any(x in url for x in ["web-gateway", "providers/find", "payment_commission", "get_requisites", "ping", "session_status", "bundles", "log/collect", "histogram"]) or "/gateway/v1/events" in url:
         return
 
-    if "/api/common/v1/pay" in url and flow.request.method == "POST":
+    if _is_v1_pay_url(url_raw) and flow.request.method == "POST":
         transfer_data["date_full"] = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
         transfer_data["payment_id"] = generate_id()
         fake = {"resultCode": "OK", "trackingId": transfer_data.get("transaction_id"), "payload": {"status": "SUCCESS"}}
@@ -960,24 +1037,11 @@ def request(flow: http.HTTPFlow) -> None:
         if flow.response is not None:
             return
 
-    if "/api/common/v1/pay" not in url or flow.request.method != "POST":
+    if not _is_v1_pay_url(flow.request.pretty_url or "") or flow.request.method != "POST":
         return
 
     body_text = flow.request.get_text() or ""
-    amount = 0.0
-    phone = None
-    name = None
-
-    if "payParameters=" in body_text:
-        try:
-            param = body_text.split("payParameters=")[1].split("&")[0]
-            data = safe_json(unquote(param))
-            if data:
-                amount = float(data.get("moneyAmount") or data.get("amount") or 0)
-                phone = data.get("providerFields", {}).get("pointer")
-                name = data.get("providerFields", {}).get("maskedFIO")
-        except:
-            pass
+    amount, phone, name = _parse_v1_pay_request_body(body_text)
 
     if amount > 0:
         _fake_payment_done = False

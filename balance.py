@@ -158,7 +158,10 @@ def response(flow: http.HTTPFlow) -> None:
             pass
     
     # ===== ЛЕГКИЙ БАЛАНС (главная строка на mybank) =====
-    if "accounts_light_ib" in url:
+    # Встраиваемый клиент иногда отдаёт путь …/accounts_light без суффикса _ib
+    if "accounts_light_ib" in url or (
+        "t-bank-app" in url.lower() and "accounts_light" in url.lower()
+    ):
         try:
             data = json.loads(flow.response.text)
             if "payload" in data and isinstance(data["payload"], list) and len(data["payload"]) > 0:
