@@ -276,34 +276,52 @@ def apply_histogram_summary_totals(data: dict, income: float, expense: float) ->
 _FRAUD_BANNER_MARKERS = (
     "заблокировали карту",
     "подозрительные операции",
+    "подозрительная операция",
+    "подозрительную операцию",
     "временно заблокировали",
+    "давайте проверим",
+    "проверим ее в чате",
+    "проверим её в чате",
 )
 
 
-def neutralize_security_banner_strings(obj) -> bool:
-    """Убирает текст про блокировку/подозрительные операции из типичных полей уведомлений."""
-    changed = False
-    text_keys = (
-        "title", "text", "message", "subtitle", "description", "body",
-        "primaryText", "secondaryText", "hint", "bannerText", "richText",
-    )
+def _string_matches_fraud_banner(s: str) -> bool:
+    low = (s or "").lower()
+    return any(m in low for m in _FRAUD_BANNER_MARKERS)
 
-    def walk(node):
+
+def neutralize_security_banner_strings(obj) -> bool:
+    """Убирает текст AML-баннера: все строковые поля + виджеты-элементы только с заголовком-баннером."""
+    changed = False
+
+    def walk(node, depth: int = 0) -> None:
         nonlocal changed
+        if depth > 32:
+            return
         if isinstance(node, dict):
             for k, v in list(node.items()):
-                if k in text_keys and isinstance(v, str):
-                    low = v.lower()
-                    if any(m in low for m in _FRAUD_BANNER_MARKERS):
-                        node[k] = ""
-                        changed = True
+                if isinstance(v, str) and len(v) >= 6 and _string_matches_fraud_banner(v):
+                    node[k] = ""
+                    changed = True
                 else:
-                    walk(v)
+                    walk(v, depth + 1)
         elif isinstance(node, list):
-            for x in node:
-                walk(x)
+            i = 0
+            while i < len(node):
+                x = node[i]
+                if isinstance(x, dict):
+                    t = " ".join(
+                        str(x.get(key) or "")
+                        for key in ("title", "text", "message", "subtitle", "description", "primaryText")
+                    )
+                    if _string_matches_fraud_banner(t):
+                        node.pop(i)
+                        changed = True
+                        continue
+                walk(x, depth + 1)
+                i += 1
 
-    walk(obj)
+    walk(obj, 0)
     return changed
 
 

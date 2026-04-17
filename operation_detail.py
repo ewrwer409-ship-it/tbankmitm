@@ -406,6 +406,126 @@ def _patch_tree(obj, manual_ids: set, fake_manual_by_id: Optional[dict] = None) 
     return changed
 
 
+def _list_contains_source_card_block(blocks: list) -> bool:
+    """Есть ли блок источника (карта/остаток), чтобы не дублировать."""
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        hay = " ".join(
+            str(block.get(k) or "").lower()
+            for k in ("title", "subtitle", "productName", "accountName", "cardName", "description", "type")
+        )
+        if "black" in hay or "дебет" in hay or "карт" in hay:
+            return True
+        if isinstance(block.get("availableBalance"), dict) or isinstance(block.get("moneyAmount"), dict):
+            return True
+        card = block.get("card")
+        if isinstance(card, dict) and (card.get("cardNumber") or card.get("ucid")):
+            return True
+    return False
+
+
+def _synthetic_transfer_source_block(
+    balance_value: float,
+    account_mask: str,
+    account_name: str,
+    transfer_title: str,
+    card_ucid: str,
+    card_id: str,
+    account_id: str,
+) -> dict:
+    """Минимальный блок «Перевод с … / Black», если бэкенд вернул только реквизиты."""
+    return {
+        "type": "transferSource",
+        "title": transfer_title,
+        "subtitle": account_name,
+        "productName": account_name,
+        "accountName": account_name,
+        "cardName": account_name,
+        "description": account_name,
+        "cardNumber": account_mask,
+        "availableBalance": {"value": balance_value, "currency": "RUB"},
+        "moneyAmount": {"value": balance_value, "currency": "RUB"},
+        "ucid": card_ucid,
+        "card": {"id": card_id, "ucid": card_ucid, "cardNumber": account_mask},
+        "account": {"id": account_id},
+    }
+
+
+def _inject_payload_card_documents_and_flags(
+    root: dict,
+    typ: str,
+    balance_value: float,
+    account_mask: str,
+    account_name: str,
+    transfer_block_title: str,
+    card_ucid: str,
+    card_id: str,
+    account_id: str,
+) -> bool:
+    """Добавляет флаги справки/квитанции и блок карты в payload, если их нет."""
+    changed = False
+    if not isinstance(root, dict):
+        return False
+    payload = root.get("payload")
+    if not isinstance(payload, dict) and isinstance(root.get("result"), dict):
+        payload = root["result"].get("payload")
+    if not isinstance(payload, dict):
+        # иногда корень = payload
+        if any(k in root for k in ("blocks", "sections", "operation")):
+            payload = root
+        else:
+            return False
+    if payload.get("hasStatement") is not True:
+        payload["hasStatement"] = True
+        changed = True
+    if payload.get("hasReceipt") is not True and typ == "Debit":
+        payload["hasReceipt"] = True
+        changed = True
+    docs = payload.get("documents")
+    if not isinstance(docs, list) or len(docs) == 0:
+        payload["documents"] = [
+            {"type": "Receipt", "title": "Квитанция", "available": True},
+            {"type": "Certificate", "title": "Справка по операции", "available": True},
+        ]
+        changed = True
+
+    synth = _synthetic_transfer_source_block(
+        balance_value,
+        account_mask,
+        account_name,
+        transfer_block_title,
+        card_ucid,
+        card_id,
+        account_id,
+    )
+    inserted = False
+    for key in ("blocks", "sections", "groups", "widgets", "details"):
+        lst = payload.get(key)
+        if not isinstance(lst, list):
+            continue
+        if lst:
+            if not _list_contains_source_card_block(lst):
+                lst.insert(0, synth)
+                changed = True
+            inserted = True
+            break
+        payload[key] = [synth]
+        changed = True
+        inserted = True
+        break
+    if not inserted:
+        bl = payload.setdefault("blocks", [])
+        if not isinstance(bl, list):
+            bl = []
+            payload["blocks"] = bl
+        if not _list_contains_source_card_block(bl):
+            bl.insert(0, synth)
+            changed = True
+
+    return changed
+
+
 def _patch_manual_detail_semantics(obj, man: dict) -> bool:
     changed = False
     typ = man.get("type") or "Debit"
@@ -524,7 +644,10 @@ def _patch_manual_detail_semantics(obj, man: dict) -> bool:
 
             titleish = " ".join(
                 str(node.get(k) or "").strip().lower()
-                for k in ("title", "name", "description", "subtitle", "productName", "accountName", "cardName")
+                for k in (
+                    "title", "name", "description", "subtitle",
+                    "productName", "accountName", "cardName", "type", "operationType",
+                )
             )
             productish = any(
                 key in node for key in (
@@ -608,6 +731,18 @@ def _patch_manual_detail_semantics(obj, man: dict) -> bool:
                 visit(item)
 
     visit(obj)
+    if _inject_payload_card_documents_and_flags(
+        obj,
+        typ,
+        balance_value,
+        account_mask,
+        account_name,
+        transfer_block_title,
+        card_ucid,
+        card_id,
+        account_id,
+    ):
+        changed = True
     return changed
 
 

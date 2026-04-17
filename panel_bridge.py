@@ -1890,6 +1890,7 @@ def response(flow: http.HTTPFlow) -> None:
         "operations_histogram" in ul
         or "operations_category_list" in ul
         or "analytics/delta" in ul
+        or "/v1/analytics" in ul
         or (
             "graphql" in ul
             and '"spending"' in body

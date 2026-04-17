@@ -499,6 +499,46 @@ def _parse_v1_pay_request_body(body_text: str, content_type: str = "") -> tuple:
     return amount, phone, name
 
 
+def _payment_commission_ok_dict() -> dict:
+    """Тот же успешный ответ комиссии, что отдаём из request-хука."""
+    return {
+        "resultCode": "OK",
+        "trackingId": "COMMISSION_OK",
+        "payload": {
+            "providerId": "p2p-anybank",
+            "description": "Комиссия не взимается банком",
+            "shortDescription": "Комиссия не взимается банком",
+            "limit": 1000000.0,
+            "value": {"value": 0, "currency": {"code": 643, "name": "RUB", "strCode": "643"}},
+            "minAmount": 10.0,
+            "maxAmount": 1000000.0,
+            "total": {"value": 0.0, "currency": {"code": 643, "name": "RUB", "strCode": "643"}},
+            "unfinishedFlag": False,
+            "externalFees": [],
+        },
+    }
+
+
+def _neutralize_transfer_aux_http_errors(flow: http.HTTPFlow, url_lower: str) -> bool:
+    """
+    Если сервер вернул 4xx/5xx на get_requisites или payment_commission, клиент часто
+    показывает «Не удалось загрузить данные», хотя остальное (баланс, анкеты) уже есть.
+    """
+    sc = flow.response.status_code
+    if sc < 400:
+        return False
+    if "get_requisites" not in url_lower and "payment_commission" not in url_lower:
+        return False
+    flow.response.status_code = 200
+    flow.response.headers["Content-Type"] = "application/json; charset=utf-8"
+    if "payment_commission" in url_lower:
+        flow.response.text = json.dumps(_payment_commission_ok_dict(), ensure_ascii=False)
+    else:
+        flow.response.text = '{"resultCode":"OK","payload":null}'
+    print(f"[transfer] подменён HTTP {sc} для вспомогательного API перевода ({url_lower[:96]})")
+    return True
+
+
 def _handle_payment_commission_request(flow: http.HTTPFlow) -> None:
     """Как transfer2: комиссия 0 и предаём merchant/банк в transfer_data до pay."""
     global _fake_payment_done
@@ -554,22 +594,7 @@ def _handle_payment_commission_request(flow: http.HTTPFlow) -> None:
         transfer_data["sender_name"] = clean_sender_name(config.get("name", {}).get("full_name", "Клиент Т-Банка"))
         save_data(transfer_data)
         _fake_payment_done = False
-        success = {
-            "resultCode": "OK",
-            "trackingId": "COMMISSION_OK",
-            "payload": {
-                "providerId": "p2p-anybank",
-                "description": "Комиссия не взимается банком",
-                "shortDescription": "Комиссия не взимается банком",
-                "limit": 1000000.0,
-                "value": {"value": 0, "currency": {"code": 643, "name": "RUB", "strCode": "643"}},
-                "minAmount": 10.0,
-                "maxAmount": 1000000.0,
-                "total": {"value": 0.0, "currency": {"code": 643, "name": "RUB", "strCode": "643"}},
-                "unfinishedFlag": False,
-                "externalFees": [],
-            },
-        }
+        success = _payment_commission_ok_dict()
         flow.response = http.Response.make(
             200,
             json.dumps(success, ensure_ascii=False).encode("utf-8"),
@@ -1038,6 +1063,19 @@ def response(flow: http.HTTPFlow) -> None:
     if not is_bank_flow(flow):
         return
     ensure_response_decoded(flow)
+    # 422 на вспомогательных API рвёт сценарии (перевод, кэш) — отдаём пустой OK.
+    ul = url_raw.lower()
+    if flow.response.status_code == 422:
+        if "social-api.t-bank-app.ru" in ul or "/social/" in ul:
+            flow.response.status_code = 200
+            flow.response.text = '{"resultCode":"OK","payload":null}'
+            return
+        if "gtech-tax-deduction" in ul or "tax-deduction" in ul:
+            flow.response.status_code = 200
+            flow.response.text = '{"resultCode":"OK","payload":{}}'
+            return
+    if _neutralize_transfer_aux_http_errors(flow, ul):
+        return
     if _try_serve_receipt_pdf_response(flow, url_raw):
         return
     if not flow.response.text:

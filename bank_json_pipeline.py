@@ -20,6 +20,12 @@ _FORCE_BALANCE_PATH_SUBSTR: tuple[str, ...] = (
     "credit/collection_info",
     "/v1/account_details",
     "/v1/now",
+    "operation/info",
+    "operation_detail",
+    "operation/view",
+    "cashflow",
+    "cash-flow",
+    "money-session",
 )
 
 
