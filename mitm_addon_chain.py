@@ -13,6 +13,7 @@ MITM_ADDON_SCRIPTS: tuple[str, ...] = (
     "transfer.py",
     "controller.py",
     "balance.py",
+    "ws_bank_push_patch.py",
     "history.py",
     "operation_detail.py",
     "name.py",

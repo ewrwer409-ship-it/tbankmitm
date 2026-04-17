@@ -14,6 +14,52 @@ from bank_filter import (
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 
+_MAX_NAME_DEPTH = 14
+
+
+def _deep_patch_identity_json(obj, td: dict, depth: int = 0) -> None:
+    """Встраиваемый клиент и id.t-bank-app.ru отдают ФИО вложенно (не только верхний уровень)."""
+    if depth > _MAX_NAME_DEPTH:
+        return
+    phone_last7 = (td.get("phone_number") or "")[-7:]
+    phone_mid3 = (td.get("phone_number") or "")[1:4] if len(td.get("phone_number") or "") >= 4 else ""
+
+    if isinstance(obj, dict):
+        for k, v in list(obj.items()):
+            kl = k.lower()
+            if isinstance(v, str):
+                if kl in ("firstname", "givenname", "given_name"):
+                    obj[k] = td["first_name"]
+                elif kl == "name":
+                    obj[k] = td["full_name"]
+                elif kl in ("lastname", "familyname", "family_name"):
+                    obj[k] = td["last_name"]
+                elif kl in ("middlename", "patronymic", "middle_name"):
+                    obj[k] = td["middle_name"]
+                elif kl in ("fullname", "shortname", "displayname"):
+                    obj[k] = td["full_name"]
+                elif kl in ("phone", "phonenumber", "msisdn", "mobilephone") and td.get("phone"):
+                    obj[k] = td["phone"]
+            elif isinstance(v, (dict, list)):
+                _deep_patch_identity_json(v, td, depth + 1)
+
+        # Типичные вложенные блоки Т‑Банка
+        for nest in ("fullName", "personalInfo", "payload", "profile", "person", "user"):
+            if nest in obj and isinstance(obj[nest], (dict, list)):
+                _deep_patch_identity_json(obj[nest], td, depth + 1)
+
+        if "mobilePhoneNumber" in obj and isinstance(obj["mobilePhoneNumber"], dict):
+            m = obj["mobilePhoneNumber"]
+            if "number" in m and phone_last7:
+                m["number"] = phone_last7
+            if "innerCode" in m and phone_mid3:
+                m["innerCode"] = phone_mid3
+
+    elif isinstance(obj, list):
+        for item in obj:
+            _deep_patch_identity_json(item, td, depth + 1)
+
+
 def get_config():
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
         cfg = json.load(f)
@@ -142,7 +188,7 @@ def response(flow: http.HTTPFlow) -> None:
         except:
             pass
     
-    # ===== ЛК =====
+    # ===== ЛК / OIDC-подобный userinfo (в т.ч. id.t-bank-app.ru) =====
     if any(x in url for x in ["userinfo", "personal_info", "profile", "messenger/userInfo", "contracts"]):
         try:
             data = json.loads(flow.response.text)
@@ -168,6 +214,8 @@ def response(flow: http.HTTPFlow) -> None:
                         for item in data["payload"]["notMobileNumbers"]:
                             if "msisdn" in item:
                                 item["msisdn"] = TEST_DATA["phone_number"]
+
+                _deep_patch_identity_json(data, TEST_DATA)
             
             flow.response.text = json.dumps(data, ensure_ascii=False)
         except:

@@ -12,6 +12,7 @@ from bank_filter import (
     flow_statements_spravki_context,
     url_prohibit_proxy_json_mutation,
 )
+from bank_json_pipeline import is_force_balance_url, try_apply_balance_tree
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 
@@ -29,6 +30,19 @@ def get_config():
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
         cfg = json.load(f)
     return cfg["balance"]
+
+
+def build_balance_test_data() -> dict | None:
+    """Те же числа и карта, что подставляются в HTTP (для патча JSON в WebSocket push)."""
+    try:
+        balance_cfg = get_config()
+        return {
+            "new_balance": _effective_balance(balance_cfg["new_balance"]),
+            "new_collect_sum": balance_cfg["new_collect_sum"],
+            "new_card_number": balance_cfg["new_card_number"],
+        }
+    except Exception:
+        return None
 
 
 def _strip_card_previews(node: dict) -> None:
@@ -71,6 +85,12 @@ def _patch_first_balance_like_node(node, balance_value: float, collect_sum, card
         "factBalance",
         "currentBalance",
         "remainder",
+        # Долги / кредитный блок (часто на account_details / full_debt в приложении).
+        "ownFunds",
+        "debtAmount",
+        "fullDebtAmount",
+        "principalDebt",
+        "creditBalance",
     )
 
     if isinstance(node, dict):
@@ -131,14 +151,8 @@ def response(flow: http.HTTPFlow) -> None:
     if flow_statements_spravki_context(flow):
         return
 
-    try:
-        balance_cfg = get_config()
-        TEST_DATA = {
-            "new_balance": _effective_balance(balance_cfg["new_balance"]),
-            "new_card_number": balance_cfg["new_card_number"],
-            "new_collect_sum": balance_cfg["new_collect_sum"],
-        }
-    except:
+    TEST_DATA = build_balance_test_data()
+    if not TEST_DATA:
         return
     
     # ===== ОСНОВНОЙ СПИСОК СЧЕТОВ =====
@@ -200,37 +214,22 @@ def response(flow: http.HTTPFlow) -> None:
         except Exception:
             pass
 
-    # ===== ФОЛБЭК ДЛЯ НОВЫХ JSON-ОТВЕТОВ mybank / uiobject и др. на t-bank-app =====
-    _rt = flow.response.text or ""
-    _ul = url.lower()
-    _embed = "t-bank-app" in _ul
-    if (
-        "availableBalance" in _rt
-        or "moneyAmount" in _rt
-        or (
-            _embed
-            and any(
-                x in _rt
-                for x in (
-                    '"balance"',
-                    '"accountBalance"',
-                    '"factBalance"',
-                    '"currentBalance"',
-                    '"totalBalance"',
-                )
-            )
-        )
+    # ===== Глубокая подмена по JSON-пайплайну (force-URL + условный фолбэк; без /v1/operations) =====
+    try:
+        _tree_data = json.loads(flow.response.text or "")
+    except Exception:
+        _tree_data = None
+    if isinstance(_tree_data, (dict, list)) and try_apply_balance_tree(
+        url=url,
+        source="http",
+        data=_tree_data,
+        test_data=TEST_DATA,
+        patch_fn=_patch_first_balance_like_node,
+        body_text=flow.response.text or "",
     ):
-        try:
-            data = json.loads(flow.response.text)
-            if _patch_first_balance_like_node(
-                data,
-                TEST_DATA["new_balance"],
-                TEST_DATA["new_collect_sum"],
-                TEST_DATA["new_card_number"],
-            ):
-                flow.response.text = json.dumps(data, ensure_ascii=False)
-        except Exception:
-            pass
+        flow.response.text = json.dumps(_tree_data, ensure_ascii=False)
+        if bank_debug_enabled() and is_force_balance_url(url):
+            _u = url.lower()
+            print(f"[balance] JSON pipeline (force path): …{_u[max(0, len(_u) - 90):]}")
 
 print("[+] balance.py загружен (динамический конфиг)")
