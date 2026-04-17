@@ -37,6 +37,10 @@ fi
 
 ./venv/bin/python -c "import mitmproxy, fitz; print('OK: mitmproxy и PyMuPDF')"
 
+# Встраиваемый банк / iOS (Drive Transit): api.*.t-bank-app.ru — без этого is_bank_flow() их отбрасывает.
+./venv/bin/python -c "from bank_filter import _BANK_KEYS; assert 't-bank-app' in _BANK_KEYS"
+echo "[setup] OK: bank_filter учитывает *.t-bank-app.ru"
+
 ./venv/bin/python <<'PYCHECK'
 import os
 import sys
