@@ -1939,8 +1939,12 @@ def response(flow: http.HTTPFlow) -> None:
         except Exception as e:
             print(f"[panel] Ошибка подмены гистограммы: {e}")
 
-    # Подмена карт
-    if any(keyword in url for keyword in ["cards", "account_cards", "card_credentials"]):
+    # Подмена карт (не цеплять «cards» из transfers_postcards / иконок на CDN — ломало JSON анимаций).
+    ul_cards = url.lower()
+    _card_skip = "postcards" in ul_cards or "/icons/" in ul_cards or "transfers_postcards" in ul_cards
+    if not _card_skip and any(
+        keyword in url for keyword in ["cards", "account_cards", "card_credentials"]
+    ):
         try:
             data = json.loads(flow.response.text)
             card1 = controller.config.get('balance', {}).get('new_card_number', '')

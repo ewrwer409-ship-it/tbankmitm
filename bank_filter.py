@@ -261,6 +261,14 @@ def is_bank_flow(flow) -> bool:
     ok = any(k in blob for k in _BANK_KEYS)
     if not ok:
         return False
+    # Встроенный клиент (*.t-bank-app.ru / tapi…): часть запросов идёт без явных ios_app
+    # маркеров в заголовках — клиентский gate ломался и отсекал ВЕСЬ обходящий JSON.
+    try:
+        rh = (getattr(flow.request, "host", None) or "").lower()
+    except Exception:
+        rh = ""
+    if "t-bank-app" in rh:
+        return True
     gate_cfg = _load_ios_gate_config()
     if gate_cfg.get("active") and not _client_gate_passes(flow, gate_cfg):
         return False

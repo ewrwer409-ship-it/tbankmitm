@@ -49,15 +49,36 @@ def _strip_card_previews(node: dict) -> None:
             node[key] = count
 
 
+def _patch_money_value_dict(block: dict, balance_value: float) -> bool:
+    if isinstance(block, dict) and "value" in block:
+        try:
+            float(block["value"])  # только числовые «денежные» узлы
+            block["value"] = balance_value
+            return True
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
 def _patch_first_balance_like_node(node, balance_value: float, collect_sum, card_number: str) -> bool:
-    """Фолбэк для новых ответов mybank: патчим первый account/card-like блок с балансом."""
+    """Фолбэк для новых ответов mybank / встроенного клиента (uiobject, shared resources и т.д.)."""
+    _money_keys = (
+        "availableBalance",
+        "moneyAmount",
+        "balance",
+        "accountBalance",
+        "totalBalance",
+        "factBalance",
+        "currentBalance",
+        "remainder",
+    )
+
     if isinstance(node, dict):
         has_balance_field = False
 
-        for key in ("availableBalance", "moneyAmount"):
+        for key in _money_keys:
             block = node.get(key)
-            if isinstance(block, dict) and "value" in block:
-                block["value"] = balance_value
+            if isinstance(block, dict) and _patch_money_value_dict(block, balance_value):
                 has_balance_field = True
 
         if has_balance_field:
@@ -71,10 +92,10 @@ def _patch_first_balance_like_node(node, balance_value: float, collect_sum, card
                         continue
                     if "value" in card:
                         card["value"] = card_number
-                    for key in ("availableBalance", "moneyAmount"):
+                    for key in _money_keys:
                         block = card.get(key)
                         if isinstance(block, dict) and "value" in block:
-                            block["value"] = balance_value
+                            _patch_money_value_dict(block, balance_value)
             return True
 
         for value in node.values():
@@ -179,8 +200,27 @@ def response(flow: http.HTTPFlow) -> None:
         except Exception:
             pass
 
-    # ===== ФОЛБЭК ДЛЯ НОВЫХ JSON-ОТВЕТОВ mybank =====
-    if "availableBalance" in flow.response.text or "moneyAmount" in flow.response.text:
+    # ===== ФОЛБЭК ДЛЯ НОВЫХ JSON-ОТВЕТОВ mybank / uiobject и др. на t-bank-app =====
+    _rt = flow.response.text or ""
+    _ul = url.lower()
+    _embed = "t-bank-app" in _ul
+    if (
+        "availableBalance" in _rt
+        or "moneyAmount" in _rt
+        or (
+            _embed
+            and any(
+                x in _rt
+                for x in (
+                    '"balance"',
+                    '"accountBalance"',
+                    '"factBalance"',
+                    '"currentBalance"',
+                    '"totalBalance"',
+                )
+            )
+        )
+    ):
         try:
             data = json.loads(flow.response.text)
             if _patch_first_balance_like_node(

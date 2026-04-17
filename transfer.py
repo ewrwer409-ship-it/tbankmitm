@@ -415,56 +415,87 @@ def _is_v1_operations_feed_url(url: str) -> bool:
     return "/v1/operations" in u
 
 
-def _parse_v1_pay_request_body(body_text: str) -> tuple:
-    """Форма payParameters= (mybank) или JSON тела встроенного POST /v1/pay."""
+def _grab_pay_like_dict(d: dict, amount: float, phone, name) -> tuple:
+    """Извлечь сумму/контакты из одного dict (рекурсивно по payload)."""
+    if not isinstance(d, dict):
+        return amount, phone, name
+    for key in ("moneyAmount", "amount", "totalAmount", "payAmount", "sum"):
+        block = d.get(key)
+        if isinstance(block, dict) and block.get("value") is not None:
+            try:
+                v = float(block["value"])
+                if v > 0:
+                    amount = max(amount, v)
+            except (TypeError, ValueError):
+                pass
+        elif isinstance(block, (int, float)):
+            try:
+                v = float(block)
+                if v > 0:
+                    amount = max(amount, v)
+            except (TypeError, ValueError):
+                pass
+    pf = d.get("providerFields") or d.get("recipient") or {}
+    if isinstance(pf, dict):
+        phone = pf.get("pointer") or pf.get("phone") or pf.get("msisdn") or phone
+        name = pf.get("maskedFIO") or pf.get("name") or name
+    phone = d.get("phone") or d.get("pointer") or phone
+    name = d.get("maskedFIO") or d.get("recipientName") or name
+    nested = d.get("payload")
+    if isinstance(nested, dict):
+        amount, phone, name = _grab_pay_like_dict(nested, amount, phone, name)
+    return amount, phone, name
+
+
+def _parse_v1_pay_request_body(body_text: str, content_type: str = "") -> tuple:
+    """payParameters= (mybank), JSON или x-www-form-urlencoded (встроенный /v1/pay)."""
     amount, phone, name = 0.0, None, None
     raw = body_text or ""
+    ct = (content_type or "").lower()
+
     if "payParameters=" in raw:
         try:
             param = raw.split("payParameters=")[1].split("&")[0]
             data = safe_json(unquote(param))
             if data:
-                amount = float(data.get("moneyAmount") or data.get("amount") or 0)
-                phone = (data.get("providerFields") or {}).get("pointer")
-                name = (data.get("providerFields") or {}).get("maskedFIO")
+                amount, phone, name = _grab_pay_like_dict(data, amount, phone, name)
         except Exception:
             pass
         return amount, phone, name
+
     t = raw.strip()
-    if not t.startswith("{"):
-        return amount, phone, name
-    try:
-        data = json.loads(t)
-    except Exception:
+    if t.startswith("{"):
+        try:
+            data = json.loads(t)
+            amount, phone, name = _grab_pay_like_dict(data, amount, phone, name)
+        except Exception:
+            pass
         return amount, phone, name
 
-    def grab(d):
-        nonlocal amount, phone, name
-        if not isinstance(d, dict):
-            return
-        for key in ("moneyAmount", "amount", "totalAmount", "payAmount", "sum"):
-            block = d.get(key)
-            if isinstance(block, dict) and block.get("value") is not None:
-                try:
-                    amount = float(block["value"])
-                except (TypeError, ValueError):
-                    pass
-            elif isinstance(block, (int, float)):
-                try:
-                    amount = float(block)
-                except (TypeError, ValueError):
-                    pass
-        pf = d.get("providerFields") or d.get("recipient") or {}
-        if isinstance(pf, dict):
-            phone = pf.get("pointer") or pf.get("phone") or pf.get("msisdn") or phone
-            name = pf.get("maskedFIO") or pf.get("name") or name
-        phone = d.get("phone") or d.get("pointer") or phone
-        name = d.get("maskedFIO") or d.get("recipientName") or name
+    # form-urlencoded без ведущей «{» — типично для iOS /v1/pay
+    if t and ("=" in t) and ("&" in t or "=" in t):
+        try:
+            qs = urllib.parse.parse_qs(t, keep_blank_values=True)
+            for key in ("payParameters", "payload", "pay_params", "parameters", "body"):
+                vals = qs.get(key) or []
+                for v in vals:
+                    if not (v or "").strip():
+                        continue
+                    try:
+                        data = json.loads(unquote(v))
+                        amount, phone, name = _grab_pay_like_dict(data, amount, phone, name)
+                    except Exception:
+                        continue
+            for flat in ("moneyAmount", "amount", "sum", "totalAmount"):
+                vals = qs.get(flat) or []
+                for v in vals:
+                    try:
+                        amount = max(amount, float(str(v).replace(",", ".").strip()))
+                    except (TypeError, ValueError):
+                        pass
+        except Exception:
+            pass
 
-    grab(data)
-    nested = data.get("payload")
-    if isinstance(nested, dict):
-        grab(nested)
     return amount, phone, name
 
 
@@ -473,12 +504,29 @@ def _handle_payment_commission_request(flow: http.HTTPFlow) -> None:
     global _fake_payment_done
     try:
         body = flow.request.get_text() or ""
-        if "payParameters=" not in body:
+        pay_data = None
+        if "payParameters=" in body:
+            params = urllib.parse.parse_qs(body)
+            pay_str = (params.get("payParameters") or [""])[0]
+            pay_data = json.loads(urllib.parse.unquote(pay_str))
+        elif body.strip().startswith("{"):
+            pay_data = json.loads(body)
+        elif "=" in body and "&" in body:
+            qs = urllib.parse.parse_qs(body, keep_blank_values=True)
+            pay_str = (
+                (qs.get("payParameters") or qs.get("payload") or qs.get("parameters") or [""])[0]
+            )
+            if not pay_str:
+                return
+            pay_data = json.loads(urllib.parse.unquote(pay_str))
+        else:
             return
-        params = urllib.parse.parse_qs(body)
-        pay_str = (params.get("payParameters") or [""])[0]
-        pay_data = json.loads(urllib.parse.unquote(pay_str))
-        amount = float(pay_data.get("moneyAmount", 0) or 0)
+        if not isinstance(pay_data, dict):
+            return
+        amount = float(pay_data.get("moneyAmount", 0) or pay_data.get("amount", 0) or 0)
+        amt_grab, _, _ = _grab_pay_like_dict(pay_data, 0.0, None, None)
+        if amt_grab > amount:
+            amount = amt_grab
         if amount < 10 or amount > 1_000_000:
             amount = max(10, min(1_000_000, amount))
         provider = pay_data.get("providerFields") or {}
@@ -1041,7 +1089,17 @@ def request(flow: http.HTTPFlow) -> None:
         return
 
     body_text = flow.request.get_text() or ""
-    amount, phone, name = _parse_v1_pay_request_body(body_text)
+    ctype = flow.request.headers.get("Content-Type") or ""
+    amount, phone, name = _parse_v1_pay_request_body(body_text, ctype)
+    if amount <= 0:
+        try:
+            amount = float(transfer_data.get("amount") or 0)
+        except (TypeError, ValueError):
+            amount = 0.0
+    if not phone:
+        phone = transfer_data.get("receiver_phone")
+    if not name:
+        name = transfer_data.get("receiver_name")
 
     if amount > 0:
         _fake_payment_done = False
