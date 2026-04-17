@@ -2905,6 +2905,43 @@ def _build_script() -> str:
 """
 
 
+def _browser_ops_should_inject_html(url: str) -> bool:
+    """
+    DOM-патчи для мини-приложения «Мой банк» в браузере (/mybank) и — при наличии HTML —
+    во встроенном WebView (*.t-bank-app.ru). Нативный UI приложения без WebView этим не покрывается:
+    там только подмена JSON в других аддонах.
+
+    Отключить инъекцию для t-bank-app HTML: TBANKMITM_BROWSER_INJECT_EMBEDDED=0
+    """
+    u = (url or "").lower()
+    if "/mybank/statements" in u or "mybank%2fstatements" in u:
+        return False
+    if "/mybank" in u:
+        return True
+    if os.environ.get("TBANKMITM_BROWSER_INJECT_EMBEDDED", "1").strip().lower() in (
+        "0",
+        "false",
+        "no",
+        "off",
+    ):
+        return False
+    if "t-bank-app" not in u:
+        return False
+    # Типичные shell/HTML встраиваемого банка (при появлении других путей — добавить сюда).
+    return any(
+        p in u
+        for p in (
+            "/app/bank",
+            "/mybank",
+            "tramvai",
+            "/gw/",
+            "/graphql",
+            "mini-app",
+            "miniapp",
+        )
+    )
+
+
 def response(flow: http.HTTPFlow) -> None:
     history.ensure_manual_operations_fresh()
     if not is_bank_flow(flow):
@@ -2912,11 +2949,7 @@ def response(flow: http.HTTPFlow) -> None:
     if not flow.response:
         return
     ensure_response_decoded(flow)
-    url = (flow.request.pretty_url or "").lower()
-    if "/mybank" not in url:
-        return
-    # Не вмешиваться в HTML «Справок» — тяжёлый скрипт + CSP; диагностика «страница не грузится».
-    if "/mybank/statements" in url or "mybank%2fstatements" in url:
+    if not _browser_ops_should_inject_html(flow.request.pretty_url or ""):
         return
     content_type = (flow.response.headers.get("content-type") or "").lower()
     if "text/html" not in content_type:

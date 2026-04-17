@@ -20,6 +20,7 @@ from bank_filter import (
     ensure_response_decoded,
     bank_debug_enabled,
     is_jsonish_response,
+    is_main_tbank_web_hostname,
     text_indicates_statements_spravki,
     url_prohibit_proxy_json_mutation,
 )
@@ -349,6 +350,21 @@ def _ua_looks_like_desktop_browser(user_agent: Optional[str]) -> bool:
     return any(x in ua for x in ("mozilla/", "chrome/", "safari/", "edg/", "firefox/"))
 
 
+def _manual_inject_skip_desktop_mybank_only(url: str, user_agent: Optional[str]) -> bool:
+    """
+    Раньше при любом UA с mozilla/safari ручные операции не вставлялись вообще — ломало WebView
+    встраиваемого банка (в UA есть Safari, хост при этом *.t-bank-app.ru). Отсекаем только
+    классический веб mybank: browser UA + *.tbank.ru / *.tinkoff.ru.
+    """
+    if not _ua_looks_like_desktop_browser(user_agent):
+        return False
+    try:
+        gh = (urlparse(url or "").hostname or "").lower()
+    except Exception:
+        return False
+    return is_main_tbank_web_hostname(gh)
+
+
 def _block_manual_inject_browser_tbank(url: str, user_agent: Optional[str]) -> bool:
     """
     SPA mybank в браузере дергает api.*.tbank.ru / api.tinkoff.ru десятками запросов.
@@ -404,6 +420,9 @@ def _mybank_page_kind(referer: Optional[str]) -> str:
         return "operations"
     if "tbank.ru/mybank/" in ref:
         return "mybank"
+    # Встраиваемый клиент (WebView): Referer без www.tbank.ru
+    if "t-bank-app" in ref and ("operations" in ref or "/operation" in ref):
+        return "operations"
     return ""
 
 
@@ -607,6 +626,9 @@ def url_allows_operation_inject(url: str) -> bool:
     u = (url or "").lower()
     if _url_is_mybank_certificates_statements_spa(u):
         return False
+    # Встраиваемый банк: лента может идти на …/bank/events/ — не путать с подстрокой «/event» ниже.
+    if "/bank/events" in u:
+        return True
     # Важно: не отрезаем «graphql» целиком — у Т‑Банка лента операций часто идёт через GraphQL JSON.
     for bad in (
         "histogram",
@@ -615,7 +637,10 @@ def url_allows_operation_inject(url: str) -> bool:
         "log/collect",
         "providers/find",
         "session_status",
-        "/event",
+        "/gateway/v1/events",
+        "/event/",
+        "?event=",
+        "&event=",
         "bundles",
         "ping",
     ):
@@ -732,9 +757,9 @@ def _graphql_manual_inject_noise_request(url: str, request_text: Optional[str]) 
             gh = (urlparse(url).hostname or "").lower()
         except Exception:
             gh = ""
-        if gh.endswith("tbank.ru"):
+        if is_main_tbank_web_hostname(gh):
             if bank_debug_enabled():
-                print("[history] graphql без operationName на *.tbank.ru — пропуск ручных операций")
+                print("[history] graphql без operationName на сайте *.tbank.ru — пропуск ручных операций")
             return True
         return False
     return not any_clean
@@ -1703,7 +1728,7 @@ def inject_manual_into_response(
     if _flow_is_statements_certificates_context(url, referer, request_text):
         return False
     page_kind = _mybank_page_kind(referer)
-    if _ua_looks_like_desktop_browser(user_agent):
+    if _manual_inject_skip_desktop_mybank_only(url, user_agent):
         return False
     request_feed_like = _request_looks_like_operations_feed(request_text)
     product_surface = _response_looks_like_product_surface(data)

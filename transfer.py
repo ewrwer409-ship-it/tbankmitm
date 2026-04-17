@@ -937,7 +937,8 @@ def response(flow: http.HTTPFlow) -> None:
     if any(x in url for x in ["get_requisites", "payment_commission", "pay", "providers"]):
         log_bank_fio(flow)
 
-    if any(x in url for x in ["web-gateway", "providers/find", "payment_commission", "get_requisites", "ping", "session_status", "bundles", "log/collect", "event", "histogram"]):
+    # Не использовать подстроку "event" — она входит в "events" (ленты встраиваемого банка).
+    if any(x in url for x in ["web-gateway", "providers/find", "payment_commission", "get_requisites", "ping", "session_status", "bundles", "log/collect", "histogram"]) or "/gateway/v1/events" in url:
         return
 
     if "/api/common/v1/pay" in url and flow.request.method == "POST":

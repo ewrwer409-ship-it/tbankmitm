@@ -15,6 +15,25 @@ _BANK_KEYS = (
 )
 
 
+def is_embedded_tbank_app_hostname(hostname: str) -> bool:
+    """Встраиваемый клиент Т‑Банка (host вида *.t-bank-app.ru / *.t-bank-app.su)."""
+    h = (hostname or "").lower()
+    return bool(h) and "t-bank-app" in h
+
+
+def is_main_tbank_web_hostname(hostname: str) -> bool:
+    """
+    Сайт Т‑Банка в браузере (*.tbank.ru, *tinkoff*), не приложение t-bank-app.
+    Используется, чтобы отличать «классический веб» от встраиваемого API при одном и том же Safari в UA.
+    """
+    if is_embedded_tbank_app_hostname(hostname):
+        return False
+    h = (hostname or "").lower().strip(".")
+    if not h:
+        return False
+    return h.endswith("tbank.ru") or h.endswith("tinkoff.ru") or h in ("tbank.ru", "www.tbank.ru")
+
+
 def is_bank_url(url: str) -> bool:
     if not url:
         return False
