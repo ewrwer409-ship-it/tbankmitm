@@ -28,6 +28,7 @@ _UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}"
 )
 _MANUAL_RE = re.compile(r"\bm_[a-zA-Z0-9_]+\b")
+_UNIFIED_OP_RE = re.compile(r"\bUNIFIED_\d+\b")
 
 def _format_phone_ru(phone: str) -> str:
     digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
@@ -44,6 +45,7 @@ def _extract_ids_from_url(url: str) -> list:
     out = []
     out.extend(m.group(0).lower() for m in _UUID_RE.finditer(url or ""))
     out.extend(m.group(0) for m in _MANUAL_RE.finditer(url or ""))
+    out.extend(m.group(0) for m in _UNIFIED_OP_RE.finditer(url or ""))
     try:
         q = parse_qs(urlparse(url).query)
         for key in ("operationId", "operation_id", "id", "operationID", "parentOperationId", "rootOperationId"):
@@ -59,7 +61,11 @@ def _collect_ids_from_json(obj, out: set) -> None:
     if isinstance(obj, dict):
         for k in ("id", "operationId", "parentOperationId", "rootOperationId"):
             v = obj.get(k)
-            if isinstance(v, str) and (v.startswith("m_") or _UUID_RE.fullmatch(v)):
+            if isinstance(v, str) and (
+                v.startswith("m_")
+                or _UUID_RE.fullmatch(v)
+                or (v.startswith("UNIFIED_") and len(v) >= 12)
+            ):
                 out.add(v)
         for v in obj.values():
             _collect_ids_from_json(v, out)
@@ -180,6 +186,14 @@ def request(flow: http.HTTPFlow) -> None:
         return
     replacement_id, replacement_time = _pick_reference_operation()
     if not replacement_id:
+        # Нет операции в кэше для подмены id — всё равно помечаем мок, чтобы response()
+        # мог отдать синтетический OK вместо 404 от банка (анимация успеха / экран перевода).
+        if target_fake:
+            try:
+                flow.metadata["manual_detail_id"] = target_fake[0]
+                flow.metadata["replacement_operation_id"] = ""
+            except Exception:
+                pass
         return
 
     target_id = target_manual[0] if target_manual else target_fake[0]
@@ -758,6 +772,20 @@ def _build_fake_manual_map(ids_in_flow: set) -> dict:
     return out
 
 
+def _bank_json_result_is_error(txt: str) -> bool:
+    s = (txt or "").strip()
+    if not s.startswith("{"):
+        return False
+    try:
+        o = json.loads(s)
+        rc = str(o.get("resultCode") or "").upper()
+        if not rc or rc in ("OK", "SUCCESS"):
+            return False
+        return True
+    except Exception:
+        return False
+
+
 def response(flow: http.HTTPFlow) -> None:
     history.ensure_manual_operations_fresh()
     if not is_bank_flow(flow):
@@ -765,11 +793,8 @@ def response(flow: http.HTTPFlow) -> None:
     if not flow.response:
         return
     ensure_response_decoded(flow)
+    sc = int(flow.response.status_code or 0)
     txt = flow.response.text or ""
-    if not txt.strip():
-        return
-    if not is_jsonish_response(flow):
-        return
 
     manual_ids = set(history.manual_operations.keys())
     url = flow.request.pretty_url or ""
@@ -808,6 +833,45 @@ def response(flow: http.HTTPFlow) -> None:
         and not meta_is_fake
         and not meta_is_manual
     ):
+        return
+
+    fake_op_ids = [fid for fid in ids_in_flow if history.op_id_in_fake_history_files(fid)]
+    try:
+        md = flow.metadata.get("manual_detail_id")
+        if isinstance(md, str) and history.op_id_in_fake_history_files(md) and md not in fake_op_ids:
+            fake_op_ids.insert(0, md)
+    except Exception:
+        pass
+
+    ulow = (url or "").lower()
+    detail_like = (
+        _url_suggests_detail_or_receipt(url)
+        or "unified_" in ulow
+        or "operation/info" in ulow
+        or "operationby" in ulow
+        or "money-session" in ulow
+        or "cash-flow" in ulow
+        or "cash_flow" in ulow
+    )
+
+    if (
+        fake_op_ids
+        and detail_like
+        and (sc >= 400 or not (txt or "").strip() or _bank_json_result_is_error(txt))
+    ):
+        hop = history._fake_history_record_by_id(fake_op_ids[0])
+        if hop:
+            oid = str(hop.get("id") or fake_op_ids[0])
+            syn = {"resultCode": "OK", "trackingId": oid, "payload": copy.deepcopy(hop)}
+            flow.response.status_code = 200
+            flow.response.headers["Content-Type"] = "application/json; charset=utf-8"
+            txt = json.dumps(syn, ensure_ascii=False)
+            flow.response.text = txt
+            print(f"[operation_detail] синтетический OK для мок {oid} (было HTTP {sc})")
+
+    if not (txt or "").strip():
+        return
+    if not is_jsonish_response(flow):
         return
 
     try:

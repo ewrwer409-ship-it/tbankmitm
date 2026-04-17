@@ -280,6 +280,9 @@ def apply_histogram_summary_totals(data: dict, income: float, expense: float) ->
 
 _FRAUD_BANNER_MARKERS = (
     "заблокировали карту",
+    "временно заблокировали карту",
+    "карту временно заблокировали",
+    "блокировку карты",
     "подозрительные операции",
     "подозрительная операция",
     "подозрительную операцию",
@@ -323,6 +326,24 @@ def neutralize_security_banner_strings(obj) -> bool:
             while i < len(node):
                 x = node[i]
                 if isinstance(x, dict):
+                    kt = str(
+                        x.get("semanticType")
+                        or x.get("widgetType")
+                        or x.get("componentType")
+                        or x.get("type")
+                        or ""
+                    ).lower()
+                    if kt in (
+                        "securitybanner",
+                        "amlbanner",
+                        "fraudwarning",
+                        "securitynotice",
+                        "antifraudbanner",
+                        "riskbanner",
+                    ) or ("security" in kt and "banner" in kt):
+                        node.pop(i)
+                        changed = True
+                        continue
                     t = " ".join(
                         str(x.get(key) or "")
                         for key in (

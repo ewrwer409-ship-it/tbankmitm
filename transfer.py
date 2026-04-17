@@ -535,6 +535,12 @@ _TRANSFER_AUX_URL_MARKERS = (
     "money-session",
     "cash-flow",
     "cash_flow",
+    "operation/info",
+    "operation_detail",
+    "operationby",
+    "payment/status",
+    "pay/result",
+    "transfer/confirm",
 )
 
 
@@ -1137,10 +1143,24 @@ def response(flow: http.HTTPFlow) -> None:
 
     if _is_v1_pay_url(url_raw) and flow.request.method == "POST":
         transfer_data["date_full"] = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-        transfer_data["payment_id"] = generate_id()
-        fake = {"resultCode": "OK", "trackingId": transfer_data.get("transaction_id"), "payload": {"status": "SUCCESS"}}
+        tid = str(transfer_data.get("transaction_id") or "").strip()
+        if not tid:
+            tid = generate_id()
+            transfer_data["transaction_id"] = tid
+        transfer_data["payment_id"] = tid
+        # Клиент дергает следующий экран по paymentId/operationId — без них нет анимации успеха.
+        fake = {
+            "resultCode": "OK",
+            "trackingId": tid,
+            "payload": {
+                "status": "OK",
+                "paymentId": tid,
+                "operationId": tid,
+                "paymentOperationId": tid,
+            },
+        }
         flow.response.text = json.dumps(fake, ensure_ascii=False)
-        print("Экран успеха — Квитанция доступна")
+        print(f"Экран успеха — Квитанция доступна (paymentId={tid})")
         return
 
 def request(flow: http.HTTPFlow) -> None:
