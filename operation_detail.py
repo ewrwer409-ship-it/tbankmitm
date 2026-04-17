@@ -1,5 +1,6 @@
 """
-Подмена JSON для экрана операции, чека/справки и вложенных структур по id ручных операций (m_...).
+Подмена JSON для экрана операции, чека/справки и вложенных структур:
+id ручных операций (m_...) и операций мок‑перевода из fake_history (last_transfer*.json).
 Загружать в mitm ПОСЛЕ history.py.
 """
 from mitmproxy import http
@@ -8,6 +9,7 @@ import copy
 import re
 import sys
 import os
+from typing import Optional
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -163,8 +165,6 @@ def _url_suggests_detail_or_receipt(u: str) -> bool:
 
 def request(flow: http.HTTPFlow) -> None:
     history.ensure_manual_operations_fresh()
-    if not history.manual_operations:
-        return
     if not is_bank_flow(flow):
         return
     _url0 = flow.request.pretty_url or ""
@@ -174,14 +174,15 @@ def request(flow: http.HTTPFlow) -> None:
         return
     manual_ids = set(history.manual_operations.keys())
     ids_in_flow = _extract_ids_from_flow(flow)
-    target_ids = [mid for mid in ids_in_flow if mid in manual_ids]
-    if not target_ids:
+    target_manual = [mid for mid in ids_in_flow if mid in manual_ids]
+    target_fake = [fid for fid in ids_in_flow if history.op_id_in_fake_history_files(fid)]
+    if not target_manual and not target_fake:
         return
     replacement_id, replacement_time = _pick_reference_operation()
     if not replacement_id:
         return
 
-    target_id = target_ids[0]
+    target_id = target_manual[0] if target_manual else target_fake[0]
     try:
         flow.metadata["manual_detail_id"] = target_id
         flow.metadata["replacement_operation_id"] = replacement_id
@@ -355,33 +356,45 @@ def _patch_receipt_like_node(obj: dict, man: dict) -> bool:
     return changed
 
 
-def _patch_tree(obj, manual_ids: set) -> bool:
+def _patch_tree(obj, manual_ids: set, fake_manual_by_id: Optional[dict] = None) -> bool:
+    fake_manual_by_id = fake_manual_by_id or {}
     changed = False
 
     def visit(node):
         nonlocal changed
         if isinstance(node, dict):
             oid = node.get("id")
-            if isinstance(oid, str) and oid in manual_ids:
-                man = history.manual_operations[oid]
-                merged = history.overlay_manual_on_template(
-                    copy.deepcopy(node),
-                    oid,
-                    man,
-                    min_time_ms=None,
-                    clamp_to_wall_ms=False,
-                )
-                node.clear()
-                node.update(merged)
-                changed = True
-                return
+            if isinstance(oid, str):
+                man = None
+                if oid in manual_ids:
+                    man = history.manual_operations[oid]
+                elif oid in fake_manual_by_id:
+                    man = fake_manual_by_id[oid]
+                if man is not None:
+                    merged = history.overlay_manual_on_template(
+                        copy.deepcopy(node),
+                        oid,
+                        man,
+                        min_time_ms=None,
+                        clamp_to_wall_ms=False,
+                    )
+                    node.clear()
+                    node.update(merged)
+                    changed = True
+                    return
             op_ref = node.get("operationId")
+            ref_man = None
+            if isinstance(op_ref, str):
+                if op_ref in manual_ids:
+                    ref_man = history.manual_operations.get(op_ref)
+                elif op_ref in fake_manual_by_id:
+                    ref_man = fake_manual_by_id[op_ref]
             if (
                 isinstance(op_ref, str)
-                and op_ref in manual_ids
+                and ref_man is not None
                 and node.get("id") != op_ref
             ):
-                if _patch_receipt_like_node(node, history.manual_operations[op_ref]):
+                if _patch_receipt_like_node(node, ref_man):
                     changed = True
             for v in node.values():
                 visit(v)
@@ -598,10 +611,20 @@ def _patch_manual_detail_semantics(obj, man: dict) -> bool:
     return changed
 
 
+def _build_fake_manual_map(ids_in_flow: set) -> dict:
+    """id мок‑операции → словарь как у manual для overlay/семантики."""
+    out = {}
+    for fid in ids_in_flow:
+        if not history.op_id_in_fake_history_files(fid):
+            continue
+        hop = history._fake_history_record_by_id(fid)
+        if hop:
+            out[fid] = history.fake_history_record_as_manual_dict(hop)
+    return out
+
+
 def response(flow: http.HTTPFlow) -> None:
     history.ensure_manual_operations_fresh()
-    if not history.manual_operations:
-        return
     if not is_bank_flow(flow):
         return
     if not flow.response:
@@ -620,7 +643,36 @@ def response(flow: http.HTTPFlow) -> None:
     if flow_statements_spravki_context(flow):
         return
     ids_in_flow = _extract_ids_from_flow(flow)
-    if not (manual_ids & ids_in_flow) and not _url_suggests_detail_or_receipt(url):
+    fake_manual_by_id = _build_fake_manual_map(ids_in_flow)
+    # Детали/справка по id из metadata (после подмены запроса backend отдаёт reference id)
+    try:
+        meta_detail = flow.metadata.get("manual_detail_id")
+        if isinstance(meta_detail, str) and meta_detail:
+            if history.op_id_in_fake_history_files(meta_detail):
+                hop = history._fake_history_record_by_id(meta_detail)
+                if hop:
+                    fake_manual_by_id.setdefault(meta_detail, history.fake_history_record_as_manual_dict(hop))
+    except Exception:
+        pass
+
+    has_manual = bool(manual_ids & ids_in_flow)
+    has_fake = bool(fake_manual_by_id)
+    try:
+        _mid = flow.metadata.get("manual_detail_id")
+        meta_is_fake = (
+            isinstance(_mid, str) and bool(_mid) and history.op_id_in_fake_history_files(_mid)
+        )
+        meta_is_manual = isinstance(_mid, str) and bool(_mid) and _mid in manual_ids
+    except Exception:
+        meta_is_fake = False
+        meta_is_manual = False
+    if (
+        not has_manual
+        and not has_fake
+        and not _url_suggests_detail_or_receipt(url)
+        and not meta_is_fake
+        and not meta_is_manual
+    ):
         return
 
     try:
@@ -630,13 +682,34 @@ def response(flow: http.HTTPFlow) -> None:
 
     # Ключевой момент: мы подменяем id/time в запросе на reference-операцию,
     # поэтому в ответе detail-экрана backend часто возвращает id/references
-    # уже от reference. Тогда `_patch_tree` не находит узлы с `m_...` id.
-    # Возвращаем id назад: replacement_id -> manual_detail_id.
+    # уже от reference. Тогда `_patch_tree` не находит узлы с нужным id.
+    # Возвращаем id назад: replacement_id -> manual_detail_id (ручная или мок).
     try:
         manual_id = flow.metadata.get("manual_detail_id")
         replacement_id = flow.metadata.get("replacement_operation_id")
-        if isinstance(manual_id, str) and manual_id in history.manual_operations and isinstance(replacement_id, str) and replacement_id:
+        if (
+            isinstance(manual_id, str)
+            and isinstance(replacement_id, str)
+            and replacement_id
+            and (
+                manual_id in history.manual_operations
+                or history.op_id_in_fake_history_files(manual_id)
+            )
+        ):
             data = _replace_id_refs_in_json(data, replacement_id, manual_id)
+    except Exception:
+        pass
+
+    try:
+        ids_merged = set(ids_in_flow)
+        _collect_ids_from_json(data, ids_merged)
+        for fid in ids_merged:
+            if fid in fake_manual_by_id:
+                continue
+            if history.op_id_in_fake_history_files(fid):
+                hop = history._fake_history_record_by_id(fid)
+                if hop:
+                    fake_manual_by_id[fid] = history.fake_history_record_as_manual_dict(hop)
     except Exception:
         pass
 
@@ -647,11 +720,21 @@ def response(flow: http.HTTPFlow) -> None:
         metadata_manual_id = None
     if metadata_manual_id in history.manual_operations:
         target_manual = history.manual_operations[metadata_manual_id]
-    for mid in ids_in_flow:
-        if mid in history.manual_operations:
-            target_manual = history.manual_operations[mid]
-            break
-    changed = _patch_tree(data, manual_ids)
+    elif isinstance(metadata_manual_id, str) and history.op_id_in_fake_history_files(metadata_manual_id):
+        hop = history._fake_history_record_by_id(metadata_manual_id)
+        if hop:
+            target_manual = history.fake_history_record_as_manual_dict(hop)
+    if target_manual is None:
+        for mid in ids_in_flow:
+            if mid in history.manual_operations:
+                target_manual = history.manual_operations[mid]
+                break
+            if history.op_id_in_fake_history_files(mid):
+                hop = history._fake_history_record_by_id(mid)
+                if hop:
+                    target_manual = history.fake_history_record_as_manual_dict(hop)
+                    break
+    changed = _patch_tree(data, manual_ids, fake_manual_by_id)
     if target_manual:
         changed = _patch_manual_detail_semantics(data, target_manual) or changed
     if changed:

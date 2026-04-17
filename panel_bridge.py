@@ -1885,9 +1885,11 @@ def response(flow: http.HTTPFlow) -> None:
     # поэтому ориентируемся не только на путь, но и на саму структуру ответа.
     ul = url.lower()
     body = flow.response.text or ""
+    # analytics/delta — сводка «траты/доходы» на экране «Операции»; раньше не ловилось, если в JSON был Earning/Spending.
     histogram_like = (
         "operations_histogram" in ul
         or "operations_category_list" in ul
+        or "analytics/delta" in ul
         or (
             "graphql" in ul
             and '"spending"' in body
@@ -1898,42 +1900,18 @@ def response(flow: http.HTTPFlow) -> None:
             and '"spending"' in body
             and '"summary"' in body
         )
+        or (
+            '"Earning"' in body
+            and '"Spending"' in body
+            and '"summary"' in body
+        )
     )
     if histogram_like:
         try:
             data = json.loads(flow.response.text)
             history.record_bank_histogram_from_payload(data)
             display_income, display_expense, _, _ = history.get_panel_chart_display_totals()
-
-            def replace_histogram_amounts(obj, income, expense):
-                if isinstance(obj, dict):
-                    if "earning" in obj and "summary" in obj["earning"]:
-                        if "value" in obj["earning"]["summary"]:
-                            old_income = obj["earning"]["summary"]["value"]
-                            obj["earning"]["summary"]["value"] = income
-                            if "intervals" in obj["earning"] and old_income > 0 and income > 0:
-                                for interval in obj["earning"]["intervals"]:
-                                    if "aggregated" in interval:
-                                        for cat in interval["aggregated"]:
-                                            if "amount" in cat and "value" in cat["amount"]:
-                                                cat["amount"]["value"] = round(cat["amount"]["value"] * income / old_income, 2)
-                    if "spending" in obj and "summary" in obj["spending"]:
-                        if "value" in obj["spending"]["summary"]:
-                            old_expense = obj["spending"]["summary"]["value"]
-                            obj["spending"]["summary"]["value"] = expense
-                            if "intervals" in obj["spending"] and old_expense > 0 and expense > 0:
-                                for interval in obj["spending"]["intervals"]:
-                                    if "aggregated" in interval:
-                                        for cat in interval["aggregated"]:
-                                            if "amount" in cat and "value" in cat["amount"]:
-                                                cat["amount"]["value"] = round(cat["amount"]["value"] * expense / old_expense, 2)
-                    for key, val in obj.items():
-                        replace_histogram_amounts(val, income, expense)
-                elif isinstance(obj, list):
-                    for item in obj:
-                        replace_histogram_amounts(item, income, expense)
-
-            replace_histogram_amounts(data, display_income, display_expense)
+            history.apply_histogram_summary_totals(data, display_income, display_expense)
             flow.response.text = json.dumps(data, ensure_ascii=False)
             print(f"[panel] Подменены гистограммы для {url} (доходы: {display_income}, расходы: {display_expense})")
         except Exception as e:
@@ -1941,7 +1919,14 @@ def response(flow: http.HTTPFlow) -> None:
 
     # Подмена карт (не цеплять «cards» из transfers_postcards / иконок на CDN — ломало JSON анимаций).
     ul_cards = url.lower()
-    _card_skip = "postcards" in ul_cards or "/icons/" in ul_cards or "transfers_postcards" in ul_cards
+    _card_skip = (
+        "transfers_postcards" in ul_cards
+        or "/transfers_postcards/" in ul_cards
+        or "/icons/" in ul_cards
+        or "envelope_" in ul_cards
+        or ("/animation/" in ul_cards and ul_cards.endswith(".json"))
+        or ("cdn.t-bank-app.ru" in ul_cards and "/icons/" in ul_cards)
+    )
     if not _card_skip and any(
         keyword in url for keyword in ["cards", "account_cards", "card_credentials"]
     ):

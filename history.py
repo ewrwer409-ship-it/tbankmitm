@@ -174,29 +174,38 @@ _bank_histogram_income = None
 _bank_histogram_expense = None
 
 
+def _summary_value_from_block(block: dict) -> Optional[float]:
+    if not isinstance(block, dict):
+        return None
+    s = block.get("summary")
+    if isinstance(s, dict) and "value" in s:
+        try:
+            return float(s["value"])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def extract_histogram_totals_from_payload(data):
-    """Читает earning.summary.value / spending.summary.value из JSON гистограммы."""
+    """Читает earning.summary.value / spending.summary.value из JSON гистограммы (в т.ч. Earning/Spending)."""
     inc = exp = None
 
     def walk(obj):
         nonlocal inc, exp
         if isinstance(obj, dict):
-            e = obj.get("earning")
-            if isinstance(e, dict) and inc is None:
-                s = e.get("summary")
-                if isinstance(s, dict) and "value" in s:
-                    try:
-                        inc = float(s["value"])
-                    except (TypeError, ValueError):
-                        pass
-            sp = obj.get("spending")
-            if isinstance(sp, dict) and exp is None:
-                s = sp.get("summary")
-                if isinstance(s, dict) and "value" in s:
-                    try:
-                        exp = float(s["value"])
-                    except (TypeError, ValueError):
-                        pass
+            for ek, sk in (("earning", "spending"), ("Earning", "Spending")):
+                if inc is None:
+                    e = obj.get(ek)
+                    if isinstance(e, dict):
+                        v = _summary_value_from_block(e)
+                        if v is not None:
+                            inc = v
+                if exp is None:
+                    sp = obj.get(sk)
+                    if isinstance(sp, dict):
+                        v = _summary_value_from_block(sp)
+                        if v is not None:
+                            exp = v
             for v in obj.values():
                 walk(v)
         elif isinstance(obj, list):
@@ -205,6 +214,138 @@ def extract_histogram_totals_from_payload(data):
 
     walk(data)
     return inc, exp
+
+
+def apply_histogram_summary_totals(data: dict, income: float, expense: float) -> None:
+    """
+    Подмена earning|Earning / spending|Spending → summary.value и масштаб по intervals
+    (экран «Операции», operations_histogram, analytics/delta — одна логика).
+    """
+
+    def patch_block(block: dict, new_total: float) -> None:
+        if not isinstance(block, dict) or "summary" not in block:
+            return
+        summ = block["summary"]
+        if not isinstance(summ, dict) or "value" not in summ:
+            return
+        try:
+            old_total = float(summ["value"])
+        except (TypeError, ValueError):
+            return
+        summ["value"] = new_total
+        intervals = block.get("intervals")
+        if not isinstance(intervals, list) or old_total <= 0 or new_total <= 0:
+            return
+        for interval in intervals:
+            if not isinstance(interval, dict):
+                continue
+            agg = interval.get("aggregated")
+            if not isinstance(agg, list):
+                continue
+            for cat in agg:
+                if (
+                    isinstance(cat, dict)
+                    and "amount" in cat
+                    and isinstance(cat["amount"], dict)
+                    and "value" in cat["amount"]
+                ):
+                    try:
+                        cat["amount"]["value"] = round(
+                            float(cat["amount"]["value"]) * new_total / old_total, 2
+                        )
+                    except (TypeError, ValueError):
+                        pass
+
+    def walk(obj):
+        if isinstance(obj, dict):
+            for k in ("earning", "Earning"):
+                if k in obj:
+                    patch_block(obj[k], income)
+            for k in ("spending", "Spending"):
+                if k in obj:
+                    patch_block(obj[k], expense)
+            for v in obj.values():
+                walk(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                walk(item)
+
+    walk(data)
+
+
+_FRAUD_BANNER_MARKERS = (
+    "заблокировали карту",
+    "подозрительные операции",
+    "временно заблокировали",
+)
+
+
+def neutralize_security_banner_strings(obj) -> bool:
+    """Убирает текст про блокировку/подозрительные операции из типичных полей уведомлений."""
+    changed = False
+    text_keys = (
+        "title", "text", "message", "subtitle", "description", "body",
+        "primaryText", "secondaryText", "hint", "bannerText", "richText",
+    )
+
+    def walk(node):
+        nonlocal changed
+        if isinstance(node, dict):
+            for k, v in list(node.items()):
+                if k in text_keys and isinstance(v, str):
+                    low = v.lower()
+                    if any(m in low for m in _FRAUD_BANNER_MARKERS):
+                        node[k] = ""
+                        changed = True
+                else:
+                    walk(v)
+        elif isinstance(node, list):
+            for x in node:
+                walk(x)
+
+    walk(obj)
+    return changed
+
+
+def neutralize_is_suspicious_tree(obj) -> bool:
+    """Во всём дереве ответа снимает признак подозрительной операции (красный баннер в ленте)."""
+    changed = False
+
+    def walk(node):
+        nonlocal changed
+        if isinstance(node, dict):
+            if node.get("isSuspicious") is True:
+                node["isSuspicious"] = False
+                changed = True
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for x in node:
+                walk(x)
+
+    walk(obj)
+    return changed
+
+
+def empty_suspicious_only_feed(url: str, data) -> bool:
+    """Ответ на /operations?…isSuspicious=true… — очищаем список, чтобы приложение не показывало баннер AML."""
+    u = (url or "").lower()
+    if "issuspicious=true" not in u.replace(" ", ""):
+        return False
+    changed = False
+    if not isinstance(data, dict):
+        return False
+    for k in ("payload", "operations", "items", "data", "result"):
+        if k not in data:
+            continue
+        v = data[k]
+        if isinstance(v, list):
+            data[k] = []
+            changed = True
+        elif isinstance(v, dict) and "items" in v and isinstance(v["items"], list):
+            v["items"] = []
+            changed = True
+    return changed
 
 
 def record_bank_histogram_from_payload(data):
@@ -2384,6 +2525,69 @@ def _fake_history_op_to_receipt_dict(hop: dict) -> dict:
     }
 
 
+def fake_history_record_as_manual_dict(hop: dict) -> dict:
+    """
+    Поля в формате записи manual_operations для overlay_manual_on_template
+    и operation_detail._patch_manual_detail_semantics (мок из fake_history).
+    """
+    if not isinstance(hop, dict):
+        return {}
+    oid = str(hop.get("id") or "")
+    amt = hop.get("amount")
+    if isinstance(amt, dict):
+        amt_f = abs(float(amt.get("value") or 0))
+    else:
+        amt_f = abs(float(amt or 0))
+    typ = str(hop.get("type") or "Debit").strip() or "Debit"
+    phone = str(
+        hop.get("receiver_phone") or hop.get("requisite_phone") or hop.get("phone") or ""
+    ).strip()
+    title = (
+        str(hop.get("receiver_name") or hop.get("title") or hop.get("description") or "").strip()
+    )
+    if not title:
+        title = (
+            str(hop.get("subcategory") or "").strip()
+            or ("Перевод" if typ == "Debit" else "Поступление")
+        )
+    bank = str(hop.get("bank_receiver") or "").strip()
+    if not bank and isinstance(hop.get("brand"), dict):
+        bank = str((hop.get("brand") or {}).get("name") or "").strip()
+    secondary = str(hop.get("subcategory") or hop.get("subtitle") or "").strip()
+    user_desc = str(hop.get("description") or "").strip()
+    card_mask = str(hop.get("receiver_card") or hop.get("card_number") or "").strip()
+    date_s = str(hop.get("date_full") or "").strip()
+    sender_rn = str(hop.get("receiver_name") or "").strip()
+    out = {
+        "id": oid,
+        "type": typ,
+        "amount": amt_f,
+        "title": title,
+        "subtitle": secondary,
+        "description": user_desc or secondary,
+        "phone": phone,
+        "requisite_phone": phone,
+        "receiver_phone": phone,
+        "requisite_sender_name": sender_rn or title,
+        "sender_name": str(hop.get("sender_name") or "").strip() or sender_rn,
+        "bank": bank,
+        "card_number": card_mask,
+        "date": date_s,
+        "operationTime": hop.get("operationTime"),
+    }
+    logo = ""
+    if isinstance(hop.get("bank_preset"), str) and hop.get("bank_preset"):
+        out["bank_preset"] = hop["bank_preset"].strip()
+    if hop.get("logo"):
+        logo = str(hop.get("logo"))
+    elif isinstance(hop.get("brand"), dict) and (hop.get("brand") or {}).get("logo"):
+        logo = str((hop.get("brand") or {}).get("logo"))
+    if logo:
+        out["bank_preset_logo"] = logo
+        out["logo"] = logo
+    return out
+
+
 def _write_fake_op_pdf_path(op_id: str, pdf_path: str) -> None:
     for path in _last_transfer_json_paths():
         if not os.path.isfile(path):
@@ -3569,6 +3773,15 @@ def response(flow: http.HTTPFlow) -> None:
             referer = referer.decode("utf-8", "replace")
         ctx_stmt = _flow_is_statements_certificates_context(url, referer, req_text)
 
+        security_patched = False
+        if not ctx_stmt:
+            if empty_suspicious_only_feed(url, data):
+                security_patched = True
+            if neutralize_is_suspicious_tree(data):
+                security_patched = True
+            if neutralize_security_banner_strings(data):
+                security_patched = True
+
         if not ctx_stmt:
             ops = extract_operations(data)
             if ops:
@@ -3629,7 +3842,7 @@ def response(flow: http.HTTPFlow) -> None:
         filtered = apply_hidden_operations_filter(data, url, referer, req_text)
         injected = False if ctx_stmt else inject_manual_into_response(data, url, req_text, ua, referer)
 
-        if injected or filtered:
+        if injected or filtered or security_patched:
             flow.response.text = json.dumps(data, ensure_ascii=False)
     except Exception as e:
         print(f"[history] Ошибка при разборе/модификации ответа: {e}")

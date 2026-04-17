@@ -91,6 +91,10 @@ def _patch_first_balance_like_node(node, balance_value: float, collect_sum, card
         "fullDebtAmount",
         "principalDebt",
         "creditBalance",
+        "available_balance",
+        "total_balance",
+        "walletBalance",
+        "mainBalance",
     )
 
     if isinstance(node, dict):

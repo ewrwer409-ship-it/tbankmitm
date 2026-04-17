@@ -12,12 +12,14 @@ from typing import Any, Callable, Literal
 
 FlowSource = Literal["http", "websocket"]
 
-# Жёстко патчим JSON по этим подстрокам пути (экран счёта, долг, кредитный блок).
+# Жёстко патчим JSON по подстроке пути. «/v1/now» (api.tinkoff.ru / t-bank) часто отдаёт
+# краткое состояние/суммы для шапки — без этого экран «крутит» обновление, а цифры с /accounts_light не подхватываются.
 _FORCE_BALANCE_PATH_SUBSTR: tuple[str, ...] = (
     "account_details",
     "full_debt_amount",
     "credit/collection_info",
     "/v1/account_details",
+    "/v1/now",
 )
 
 
@@ -50,16 +52,25 @@ def body_suggests_balance_fields(body: str, url: str) -> bool:
     t = body or ""
     if "availableBalance" in t or "moneyAmount" in t:
         return True
-    if not is_tbank_embedded_url(url):
+    uq = (url or "").lower()
+    if not (
+        is_tbank_embedded_url(url)
+        or "tinkoff" in uq
+        or "tbank" in uq
+        or "t-bank" in uq
+    ):
         return False
     return any(
         x in t
         for x in (
             '"balance"',
             '"accountBalance"',
+            '"available_balance"',
             '"factBalance"',
             '"currentBalance"',
             '"totalBalance"',
+            '"walletBalance"',
+            '"mainBalance"',
         )
     )
 

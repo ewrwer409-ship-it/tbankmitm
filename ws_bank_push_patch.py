@@ -29,6 +29,11 @@ _WS_PATCH = os.environ.get("TBANKMITM_WS_BALANCE_PATCH", "1").strip().lower() no
 
 _PATH_HINT = os.environ.get("TBANKMITM_WS_BALANCE_PATH_SUBSTR", "/push").strip().lower() or "/push"
 
+print(
+    "[+] ws_bank_push_patch загружен "
+    "(патч баланса в JSON по WebSocket; TBANKMITM_WS_BALANCE_PATCH=0 отключает)"
+)
+
 
 def websocket_message(flow: http.HTTPFlow) -> None:
     if not _WS_PATCH:
