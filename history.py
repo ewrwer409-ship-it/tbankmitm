@@ -477,6 +477,11 @@ def empty_suspicious_only_feed(url: str, data) -> bool:
     if "issuspicious=true" not in u.replace(" ", ""):
         return False
     changed = False
+    if isinstance(data, list):
+        if len(data) > 0:
+            data.clear()
+            return True
+        return False
     if not isinstance(data, dict):
         return False
     for k in ("payload", "operations", "items", "data", "result"):
@@ -520,6 +525,34 @@ def empty_suspicious_only_feed(url: str, data) -> bool:
                 _deep_empty_feed_lists(x, depth + 1)
 
     _deep_empty_feed_lists(data)
+
+    def _deep_reset_suspicious_flags(node, depth: int = 0) -> None:
+        nonlocal changed
+        if depth > 16:
+            return
+        if isinstance(node, dict):
+            for k, v in list(node.items()):
+                lk = str(k).lower()
+                if "suspicious" in lk or "fraud" in lk or "aml" in lk or "securitybanner" in lk:
+                    if isinstance(v, bool) and v:
+                        node[k] = False
+                        changed = True
+                    elif isinstance(v, (int, float)) and v != 0:
+                        node[k] = 0
+                        changed = True
+                    elif isinstance(v, str) and v.strip():
+                        node[k] = ""
+                        changed = True
+                    elif isinstance(v, list) and len(v) > 0:
+                        node[k] = []
+                        changed = True
+                else:
+                    _deep_reset_suspicious_flags(v, depth + 1)
+        elif isinstance(node, list):
+            for x in node:
+                _deep_reset_suspicious_flags(x, depth + 1)
+
+    _deep_reset_suspicious_flags(data)
     return changed
 
 
@@ -2672,6 +2705,52 @@ def canonical_fake_transfer_op_id(op_id: str) -> str:
     return s
 
 
+def _synthetic_fake_record_from_last_transfer_root(data: dict) -> Optional[dict]:
+    """
+    Fallback, когда в last_transfer*.json нет fake_history, но есть корневая
+    запись последнего перевода (transaction_id / receiver_phone / bank_receiver).
+    """
+    if not isinstance(data, dict):
+        return None
+    rid = str(data.get("transaction_id") or data.get("payment_id") or "").strip()
+    if not rid:
+        return None
+    amount = data.get("amount")
+    try:
+        amount_f = abs(float(amount or 0))
+    except Exception:
+        amount_f = 0.0
+    ts = 0
+    try:
+        ts = int(data.get("timestamp_ms") or 0)
+    except Exception:
+        ts = 0
+    receiver_name = str(data.get("receiver_name") or "").strip()
+    receiver_phone = str(data.get("receiver_phone") or "").strip()
+    bank_receiver = str(data.get("bank_receiver") or "").strip()
+    bank_logo = str(data.get("bank_logo") or "").strip()
+    out = {
+        "id": rid,
+        "type": "Debit",
+        "amount": amount_f,
+        "title": receiver_name or receiver_phone or "Перевод",
+        "description": "Перевод",
+        "subcategory": "Переводы",
+        "date_full": str(data.get("date_full") or "").strip(),
+        "receiver_name": receiver_name,
+        "receiver_phone": receiver_phone,
+        "sender_name": str(data.get("sender_name") or "").strip(),
+        "bank_receiver": bank_receiver,
+        "bank_preset": "sbp",
+    }
+    if ts > 0:
+        out["operationTime"] = {"milliseconds": ts}
+    if bank_logo:
+        out["logo"] = bank_logo
+        out["brand"] = {"name": bank_receiver or "Банк", "logo": bank_logo}
+    return out
+
+
 def op_id_in_fake_history_files(op_id: str) -> bool:
     if not op_id:
         return False
@@ -2687,6 +2766,9 @@ def op_id_in_fake_history_files(op_id: str) -> bool:
         for op in data.get("fake_history") or []:
             if isinstance(op, dict) and canonical_fake_transfer_op_id(str(op.get("id") or "")) == cid:
                 return True
+        synth = _synthetic_fake_record_from_last_transfer_root(data)
+        if synth and canonical_fake_transfer_op_id(str(synth.get("id") or "")) == cid:
+            return True
     return False
 
 
@@ -2706,6 +2788,9 @@ def _fake_history_record_by_id(op_id: str) -> Optional[dict]:
         for op in data.get("fake_history") or []:
             if isinstance(op, dict) and canonical_fake_transfer_op_id(str(op.get("id") or "")) == cid:
                 return op
+        synth = _synthetic_fake_record_from_last_transfer_root(data)
+        if synth and canonical_fake_transfer_op_id(str(synth.get("id") or "")) == cid:
+            return synth
     return None
 
 
