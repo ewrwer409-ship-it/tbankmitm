@@ -397,16 +397,9 @@ class TBankSBPDebitInjector:
         host = flow.request.host.lower()
         path = flow.request.path.lower()
 
-        if not any(h in host for h in ("tbank.ru", "tinkoff.ru", "t-bank-app")):
+        if not ("tbank.ru" in host or "tinkoff.ru" in host):
             return
-        ok_common = "/api/common/v1/operations" in path
-        ok_embed = (
-            "t-bank-app" in host
-            and "/v1/operations" in path
-            and "operations_histogram" not in path
-            and "operations_category" not in path
-        )
-        if not (ok_common or ok_embed):
+        if "/api/common/v1/operations" not in path:
             return
         if not _request_is_from_operations_page(flow):
             return

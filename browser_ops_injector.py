@@ -2044,98 +2044,9 @@ def _build_script() -> str:
     return changed;
   }}
 
-  const _AML_MARKERS = [
-    'заблокировали карту',
-    'временно заблокировали карту',
-    'карту временно заблокировали',
-    'временно заблокировали',
-    'блокировку карты',
-    'подозрительные операции',
-    'подозрительная операция',
-    'подозрительную операцию',
-    'подозрительная активность',
-    'давайте проверим',
-    'проверим ее в чате',
-    'проверим её в чате',
-    'антимошенничес',
-    'мошенничес',
-    'ограничили операции',
-    'ограничили переводы',
-    'переводы временно',
-    'нестандартную операцию',
-    'нестандартная операция'
-  ];
-
-  function _stringMatchesFraudBanner(s) {{
-    const low = String(s || '').toLowerCase();
-    return _AML_MARKERS.some((m) => low.indexOf(m) !== -1);
-  }}
-
-  function stripSecurityBannersFromJson(node, depth) {{
-    const d = depth || 0;
-    if (d > 48 || !node) return;
-    if (Array.isArray(node)) {{
-      for (let i = node.length - 1; i >= 0; i--) {{
-        const x = node[i];
-        if (x && typeof x === 'object' && !Array.isArray(x)) {{
-          const kt = String(
-            x.semanticType || x.widgetType || x.componentType || x.type || ''
-          ).toLowerCase();
-          const ktBanner =
-            kt === 'securitybanner' ||
-            kt === 'amlbanner' ||
-            kt === 'fraudwarning' ||
-            kt === 'securitynotice' ||
-            kt === 'antifraudbanner' ||
-            kt === 'riskbanner' ||
-            (kt.indexOf('security') !== -1 && kt.indexOf('banner') !== -1);
-          const t = [
-            x.title,
-            x.text,
-            x.message,
-            x.subtitle,
-            x.description,
-            x.primaryText,
-            x.bodyText,
-            x.hint,
-            x.richTitle
-          ]
-            .map((a) => String(a || ''))
-            .join(' ');
-          const blobJoin = Object.keys(x)
-            .map((k) => (typeof x[k] === 'string' ? x[k] : ''))
-            .join(' ')
-            .slice(0, 1200);
-          if (
-            ktBanner ||
-            _stringMatchesFraudBanner(t) ||
-            (blobJoin.length >= 16 && _stringMatchesFraudBanner(blobJoin))
-          ) {{
-            node.splice(i, 1);
-            continue;
-          }}
-        }}
-        stripSecurityBannersFromJson(x, d + 1);
-      }}
-      return;
-    }}
-    if (typeof node === 'object') {{
-      if (node.isSuspicious === true) node.isSuspicious = false;
-      Object.keys(node).forEach((k) => {{
-        const v = node[k];
-        if (typeof v === 'string' && v.length >= 6 && _stringMatchesFraudBanner(v)) {{
-          node[k] = '';
-        }} else {{
-          stripSecurityBannersFromJson(v, d + 1);
-        }}
-      }});
-    }}
-  }}
-
   function patchData(data, url) {{
-    if (!data || typeof data !== 'object') return data;
-    stripSecurityBannersFromJson(data, 0);
     if (!shouldPatchOperationsList()) return data;
+    if (!data || typeof data !== 'object') return data;
     const lists = collectLists(data);
     if (!lists.length) return data;
     const primary = lists.slice().sort((a, b) => b.length - a.length)[0];
@@ -2828,48 +2739,7 @@ def _build_script() -> str:
     return false;
   }}
 
-  function removeAmlBannerFromDom() {{
-    if (typeof document === 'undefined' || !document.createTreeWalker) return;
-    try {{
-      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
-      let n;
-      const hits = [];
-      while ((n = walker.nextNode())) {{
-        const raw = String(n.nodeValue || '');
-        if (!_stringMatchesFraudBanner(raw)) continue;
-        hits.push(n);
-      }}
-      hits.forEach((textNode) => {{
-        let el = textNode.parentElement;
-        for (let d = 0; d < 14 && el && el !== document.body; d++) {{
-          const cls = String(el.className || '').toLowerCase();
-          const dqa = String(el.getAttribute('data-qa-type') || '').toLowerCase();
-          const role = String(el.getAttribute('role') || '').toLowerCase();
-          const t = String(el.textContent || '').replace(/\\s+/g, ' ').trim();
-          if (
-            role === 'alert' ||
-            cls.indexOf('banner') !== -1 ||
-            cls.indexOf('alert') !== -1 ||
-            cls.indexOf('warning') !== -1 ||
-            cls.indexOf('notification') !== -1 ||
-            dqa.indexOf('alert') !== -1 ||
-            dqa.indexOf('banner') !== -1 ||
-            dqa.indexOf('notification') !== -1 ||
-            (t.length >= 20 && t.length <= 1400 && _stringMatchesFraudBanner(t))
-          ) {{
-            try {{
-              el.remove();
-            }} catch (eRm) {{}}
-            break;
-          }}
-          el = el.parentElement;
-        }}
-      }});
-    }} catch (eAml) {{}}
-  }}
-
   function patchDetailDom() {{
-    removeAmlBannerFromDom();
     if (!shouldPatchOperationsDetail()) return;
     injectManualDetailStyles();
     const opId = getDetailUrlOperationId();
@@ -2956,6 +2826,7 @@ def _build_script() -> str:
     window.fetch = async function () {{
       const response = await originalFetch.apply(this, arguments);
       try {{
+        if (!shouldPatchOperationsList()) return response;
         const req = arguments[0];
         const reqUrl = typeof req === 'string' ? req : (req && req.url) || '';
         const finalUrl = response.url || reqUrl;
@@ -3034,43 +2905,6 @@ def _build_script() -> str:
 """
 
 
-def _browser_ops_should_inject_html(url: str) -> bool:
-    """
-    DOM-патчи для мини-приложения «Мой банк» в браузере (/mybank) и — при наличии HTML —
-    во встроенном WebView (*.t-bank-app.ru). Нативный UI приложения без WebView этим не покрывается:
-    там только подмена JSON в других аддонах.
-
-    Отключить инъекцию для t-bank-app HTML: TBANKMITM_BROWSER_INJECT_EMBEDDED=0
-    """
-    u = (url or "").lower()
-    if "/mybank/statements" in u or "mybank%2fstatements" in u:
-        return False
-    if "/mybank" in u:
-        return True
-    if os.environ.get("TBANKMITM_BROWSER_INJECT_EMBEDDED", "1").strip().lower() in (
-        "0",
-        "false",
-        "no",
-        "off",
-    ):
-        return False
-    if "t-bank-app" not in u:
-        return False
-    # Типичные shell/HTML встраиваемого банка (при появлении других путей — добавить сюда).
-    return any(
-        p in u
-        for p in (
-            "/app/bank",
-            "/mybank",
-            "tramvai",
-            "/gw/",
-            "/graphql",
-            "mini-app",
-            "miniapp",
-        )
-    )
-
-
 def response(flow: http.HTTPFlow) -> None:
     history.ensure_manual_operations_fresh()
     if not is_bank_flow(flow):
@@ -3078,7 +2912,11 @@ def response(flow: http.HTTPFlow) -> None:
     if not flow.response:
         return
     ensure_response_decoded(flow)
-    if not _browser_ops_should_inject_html(flow.request.pretty_url or ""):
+    url = (flow.request.pretty_url or "").lower()
+    if "/mybank" not in url:
+        return
+    # Не вмешиваться в HTML «Справок» — тяжёлый скрипт + CSP; диагностика «страница не грузится».
+    if "/mybank/statements" in url or "mybank%2fstatements" in url:
         return
     content_type = (flow.response.headers.get("content-type") or "").lower()
     if "text/html" not in content_type:

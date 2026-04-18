@@ -15,11 +15,6 @@ from pathlib import Path
 import subprocess
 import urllib.parse
 import time
-import ssl
-import smtplib
-import threading
-from email.message import EmailMessage
-from email.utils import formataddr
 from urllib.parse import unquote
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -396,211 +391,17 @@ def safe_json(text):
         return None
 
 
-def _is_tbank_app_embedded_url(url: str) -> bool:
-    return "t-bank-app" in (url or "").lower()
-
-
-def _is_v1_pay_url(url: str) -> bool:
-    """Веб: /api/common/v1/pay | Встраиваемый клиент: …/v1/pay на *.t-bank-app.ru."""
-    u = (url or "").lower()
-    if "/api/common/v1/pay" in u:
-        return True
-    return _is_tbank_app_embedded_url(u) and "/v1/pay" in u
-
-
-def _is_v1_operations_feed_url(url: str) -> bool:
-    """Лента операций (не гистограмма / не категории)."""
-    u = (url or "").lower()
-    if "/api/common/v1/operations" in u:
-        return True
-    if not _is_tbank_app_embedded_url(u):
-        return False
-    if "operations_histogram" in u or "operations_category" in u:
-        return False
-    return "/v1/operations" in u
-
-
-def _grab_pay_like_dict(d: dict, amount: float, phone, name) -> tuple:
-    """Извлечь сумму/контакты из одного dict (рекурсивно по payload)."""
-    if not isinstance(d, dict):
-        return amount, phone, name
-    for key in ("moneyAmount", "amount", "totalAmount", "payAmount", "sum"):
-        block = d.get(key)
-        if isinstance(block, dict) and block.get("value") is not None:
-            try:
-                v = float(block["value"])
-                if v > 0:
-                    amount = max(amount, v)
-            except (TypeError, ValueError):
-                pass
-        elif isinstance(block, (int, float)):
-            try:
-                v = float(block)
-                if v > 0:
-                    amount = max(amount, v)
-            except (TypeError, ValueError):
-                pass
-    pf = d.get("providerFields") or d.get("recipient") or {}
-    if isinstance(pf, dict):
-        phone = pf.get("pointer") or pf.get("phone") or pf.get("msisdn") or phone
-        name = pf.get("maskedFIO") or pf.get("name") or name
-    phone = d.get("phone") or d.get("pointer") or phone
-    name = d.get("maskedFIO") or d.get("recipientName") or name
-    nested = d.get("payload")
-    if isinstance(nested, dict):
-        amount, phone, name = _grab_pay_like_dict(nested, amount, phone, name)
-    return amount, phone, name
-
-
-def _parse_v1_pay_request_body(body_text: str, content_type: str = "") -> tuple:
-    """payParameters= (mybank), JSON или x-www-form-urlencoded (встроенный /v1/pay)."""
-    amount, phone, name = 0.0, None, None
-    raw = body_text or ""
-    ct = (content_type or "").lower()
-
-    if "payParameters=" in raw:
-        try:
-            param = raw.split("payParameters=")[1].split("&")[0]
-            data = safe_json(unquote(param))
-            if data:
-                amount, phone, name = _grab_pay_like_dict(data, amount, phone, name)
-        except Exception:
-            pass
-        return amount, phone, name
-
-    t = raw.strip()
-    if t.startswith("{"):
-        try:
-            data = json.loads(t)
-            amount, phone, name = _grab_pay_like_dict(data, amount, phone, name)
-        except Exception:
-            pass
-        return amount, phone, name
-
-    # form-urlencoded без ведущей «{» — типично для iOS /v1/pay
-    if t and ("=" in t) and ("&" in t or "=" in t):
-        try:
-            qs = urllib.parse.parse_qs(t, keep_blank_values=True)
-            for key in ("payParameters", "payload", "pay_params", "parameters", "body"):
-                vals = qs.get(key) or []
-                for v in vals:
-                    if not (v or "").strip():
-                        continue
-                    try:
-                        data = json.loads(unquote(v))
-                        amount, phone, name = _grab_pay_like_dict(data, amount, phone, name)
-                    except Exception:
-                        continue
-            for flat in ("moneyAmount", "amount", "sum", "totalAmount"):
-                vals = qs.get(flat) or []
-                for v in vals:
-                    try:
-                        amount = max(amount, float(str(v).replace(",", ".").strip()))
-                    except (TypeError, ValueError):
-                        pass
-        except Exception:
-            pass
-
-    return amount, phone, name
-
-
-def _payment_commission_ok_dict() -> dict:
-    """Тот же успешный ответ комиссии, что отдаём из request-хука."""
-    return {
-        "resultCode": "OK",
-        "trackingId": "COMMISSION_OK",
-        "payload": {
-            "providerId": "p2p-anybank",
-            "description": "Комиссия не взимается банком",
-            "shortDescription": "Комиссия не взимается банком",
-            "limit": 1000000.0,
-            "value": {"value": 0, "currency": {"code": 643, "name": "RUB", "strCode": "643"}},
-            "minAmount": 10.0,
-            "maxAmount": 1000000.0,
-            "total": {"value": 0.0, "currency": {"code": 643, "name": "RUB", "strCode": "643"}},
-            "unfinishedFlag": False,
-            "externalFees": [],
-        },
-    }
-
-
-# Вспомогательные запросы сценария СБП/перевода; ошибка на любом из них даёт модалку «Не удалось загрузить».
-_TRANSFER_AUX_URL_MARKERS = (
-    "get_requisites",
-    "payment_commission",
-    "providers/find",
-    "phonetransfer",
-    "phone-transfer",
-    "money-transfer",
-    "internal-transfer",
-    "outgoingtransfer",
-    "incomingtransfer",
-    "multi_transfer",
-    "transfer_session",
-    "money-session",
-    "cash-flow",
-    "cash_flow",
-    "operation/info",
-    "operation_detail",
-    "operationby",
-    "payment/status",
-    "pay/result",
-    "transfer/confirm",
-)
-
-
-def _url_matches_transfer_aux(url_lower: str) -> bool:
-    return any(m in url_lower for m in _TRANSFER_AUX_URL_MARKERS)
-
-
-def _neutralize_transfer_aux_http_errors(flow: http.HTTPFlow, url_lower: str) -> bool:
-    """
-    Если сервер вернул 4xx/5xx на вспомогательных API перевода, клиент часто
-    показывает «Не удалось загрузить данные», хотя остальное (баланс, анкеты) уже есть.
-    """
-    sc = flow.response.status_code
-    if sc < 400:
-        return False
-    if not _url_matches_transfer_aux(url_lower):
-        return False
-    flow.response.status_code = 200
-    flow.response.headers["Content-Type"] = "application/json; charset=utf-8"
-    if "payment_commission" in url_lower:
-        flow.response.text = json.dumps(_payment_commission_ok_dict(), ensure_ascii=False)
-    else:
-        flow.response.text = '{"resultCode":"OK","payload":null}'
-    print(f"[transfer] подменён HTTP {sc} для вспомогательного API перевода ({url_lower[:96]})")
-    return True
-
-
 def _handle_payment_commission_request(flow: http.HTTPFlow) -> None:
     """Как transfer2: комиссия 0 и предаём merchant/банк в transfer_data до pay."""
     global _fake_payment_done
     try:
         body = flow.request.get_text() or ""
-        pay_data = None
-        if "payParameters=" in body:
-            params = urllib.parse.parse_qs(body)
-            pay_str = (params.get("payParameters") or [""])[0]
-            pay_data = json.loads(urllib.parse.unquote(pay_str))
-        elif body.strip().startswith("{"):
-            pay_data = json.loads(body)
-        elif "=" in body and "&" in body:
-            qs = urllib.parse.parse_qs(body, keep_blank_values=True)
-            pay_str = (
-                (qs.get("payParameters") or qs.get("payload") or qs.get("parameters") or [""])[0]
-            )
-            if not pay_str:
-                return
-            pay_data = json.loads(urllib.parse.unquote(pay_str))
-        else:
+        if "payParameters=" not in body:
             return
-        if not isinstance(pay_data, dict):
-            return
-        amount = float(pay_data.get("moneyAmount", 0) or pay_data.get("amount", 0) or 0)
-        amt_grab, _, _ = _grab_pay_like_dict(pay_data, 0.0, None, None)
-        if amt_grab > amount:
-            amount = amt_grab
+        params = urllib.parse.parse_qs(body)
+        pay_str = (params.get("payParameters") or [""])[0]
+        pay_data = json.loads(urllib.parse.unquote(pay_str))
+        amount = float(pay_data.get("moneyAmount", 0) or 0)
         if amount < 10 or amount > 1_000_000:
             amount = max(10, min(1_000_000, amount))
         provider = pay_data.get("providerFields") or {}
@@ -628,7 +429,22 @@ def _handle_payment_commission_request(flow: http.HTTPFlow) -> None:
         transfer_data["sender_name"] = clean_sender_name(config.get("name", {}).get("full_name", "Клиент Т-Банка"))
         save_data(transfer_data)
         _fake_payment_done = False
-        success = _payment_commission_ok_dict()
+        success = {
+            "resultCode": "OK",
+            "trackingId": "COMMISSION_OK",
+            "payload": {
+                "providerId": "p2p-anybank",
+                "description": "Комиссия не взимается банком",
+                "shortDescription": "Комиссия не взимается банком",
+                "limit": 1000000.0,
+                "value": {"value": 0, "currency": {"code": 643, "name": "RUB", "strCode": "643"}},
+                "minAmount": 10.0,
+                "maxAmount": 1000000.0,
+                "total": {"value": 0.0, "currency": {"code": 643, "name": "RUB", "strCode": "643"}},
+                "unfinishedFlag": False,
+                "externalFees": [],
+            },
+        }
         flow.response = http.Response.make(
             200,
             json.dumps(success, ensure_ascii=False).encode("utf-8"),
@@ -714,8 +530,7 @@ def _add_to_fake_history() -> bool:
         "category": {"id": "45", "name": "Другое"},
         "brand": {"id": "11250", "name": display_name, "logo": logo_url, "baseColor": "f12e16", "fileLink": logo_url},
         "spendingCategory": {"id": "24", "name": "Переводы", "icon": "transfers-c1", "baseColor": "4FC5DF"},
-        "sender_name": str(transfer_data.get("sender_name") or "").strip(),
-        "senderDetails": str(transfer_data.get("sender_name") or "").strip(),
+        "senderDetails": "",
         "subcategory": display_name,
         "loyaltyBonus": [],
         "loyaltyPayment": [],
@@ -734,17 +549,7 @@ def _add_to_fake_history() -> bool:
         "virtualPaymentType": 0,
         "hasStatement": True,
         "hasShoppingReceipt": False,
-        "additionalInfo": [
-            {"fieldName": "Тип перевода", "fieldValue": "Система быстрых платежей"},
-            {
-                "fieldName": "Отправитель",
-                "fieldValue": str(transfer_data.get("sender_name") or "").strip() or "Клиент",
-            },
-            {
-                "fieldName": "Номер телефона",
-                "fieldValue": str(transfer_data.get("receiver_phone") or "").strip(),
-            },
-        ],
+        "additionalInfo": [{"fieldName": "Тип перевода", "fieldValue": "Система быстрых платежей"}],
         "isDispute": False,
         "operationTransferred": False,
         "isOffline": False,
@@ -759,10 +564,7 @@ def _add_to_fake_history() -> bool:
         "isInner": False,
         "isAuto": False,
         "merges": [],
-        "documents": [
-            {"type": "Receipt", "title": "Квитанция", "available": True},
-            {"type": "Certificate", "title": "Справка по операции", "available": True},
-        ],
+        "documents": ["Statement"],
         "pdf_path": pdf_path,
         "date_full": transfer_data.get("date_full") or "",
         "receiver_phone": str(transfer_data.get("receiver_phone") or "").strip(),
@@ -1015,44 +817,52 @@ def _parse_receipt_operation_id_from_flow(flow: http.HTTPFlow):
     return operation_id
 
 
-def _get_receipt_pdf_for_operation(operation_id):
+def _try_serve_receipt_pdf_response(flow: http.HTTPFlow, url_raw: str) -> bool:
     """
-    Тот же PDF, что отдаётся по payment_receipt_pdf: fake_history / history / сгенерированный чек.
+    Подмена ответа для URL с payment_receipt_pdf / operation_statement_pdf.
+    Вызывается до проверок JSON/тела — как у кнопки «Квитанция» в мок‑переводе.
+    Ручные операции и мок из истории: history.ensure_operation_receipt_pdf_path.
     """
-    oid = operation_id
-    if not oid and fake_history:
-        oid = fake_history[0].get("id") if fake_history else None
+    ul = url_raw.lower()
+    if "payment_receipt_pdf" not in ul and "operation_statement_pdf" not in ul:
+        return False
+    if not is_bank_flow(flow):
+        return False
+
+    operation_id = _parse_receipt_operation_id_from_flow(flow)
+    if not operation_id and fake_history:
+        operation_id = fake_history[0].get("id")
 
     pdf_path = None
-    if oid:
+    if operation_id:
         try:
-            pdf_path = history_mod.ensure_operation_receipt_pdf_path(str(oid))
+            pdf_path = history_mod.ensure_operation_receipt_pdf_path(str(operation_id))
         except Exception:
             pdf_path = None
     if pdf_path and Path(pdf_path).exists():
-        return pdf_path
-
-    pdf_path = None
-    if oid and fake_history:
-        for op in fake_history:
-            if not isinstance(op, dict):
-                continue
-            if op.get("id") == oid or op.get("transaction_id") == oid:
-                pdf_path = op.get("pdf_path")
-                break
-    if not pdf_path and fake_history:
-        pdf_path = fake_history[0].get("pdf_path") if isinstance(fake_history[0], dict) else None
-    if not pdf_path:
-        pdf_path = transfer_data.get("last_pdf_path")
+        pass
+    else:
+        pdf_path = None
+        if operation_id and fake_history:
+            for op in fake_history:
+                if not isinstance(op, dict):
+                    continue
+                if op.get("id") == operation_id or op.get("transaction_id") == operation_id:
+                    pdf_path = op.get("pdf_path")
+                    break
+        if not pdf_path and fake_history:
+            pdf_path = fake_history[0].get("pdf_path") if isinstance(fake_history[0], dict) else None
+        if not pdf_path:
+            pdf_path = transfer_data.get("last_pdf_path")
 
     if not pdf_path or not Path(pdf_path).exists():
-        fb = oid or ("FALLBACK_" + str(int(time.time() * 1000)))
+        fb = operation_id or ("FALLBACK_" + str(int(time.time() * 1000)))
         pdf_path = None
-        if oid and fake_history:
+        if operation_id and fake_history:
             for hop in fake_history:
                 if not isinstance(hop, dict):
                     continue
-                if str(hop.get("id")) != str(oid):
+                if str(hop.get("id")) != str(operation_id):
                     continue
                 amt = hop.get("amount")
                 if isinstance(amt, dict):
@@ -1086,89 +896,6 @@ def _get_receipt_pdf_for_operation(operation_id):
             pdf_path = create_real_receipt(fb)
 
     if pdf_path and Path(pdf_path).exists():
-        return pdf_path
-    return None
-
-
-def _send_receipt_email_worker(
-    to_mail: str,
-    operation_id: str,
-    pdf_path: str,
-) -> None:
-    """Фоновая отправка PDF на SMTP; From — display name из config.receipt_mail."""
-    try:
-        cfg_root = load_config()
-        rm = (cfg_root or {}).get("receipt_mail") or {}
-        if not rm.get("enabled"):
-            return
-        host = (rm.get("smtp_host") or "").strip()
-        port = int(rm.get("smtp_port") or 465)
-        user = (rm.get("smtp_user") or "").strip()
-        password = rm.get("smtp_password") or ""
-        use_ssl = rm.get("smtp_use_ssl", True)
-        name_cfg = (cfg_root or {}).get("name") or {}
-        from_email = (rm.get("from_email") or "").strip() or user or (name_cfg.get("email") or "").strip()
-        if not host or not from_email:
-            print("[transfer] receipt_mail: задайте smtp_host и from_email (или smtp_user)")
-            return
-        display = (rm.get("from_display_name") or "Т‑Банк").strip()
-        subject = (rm.get("subject") or "Квитанция по операции").strip()
-        body_text = (rm.get("body") or "Документ во вложении.").strip()
-
-        with open(pdf_path, "rb") as f:
-            pdf_bytes = f.read()
-
-        msg = EmailMessage()
-        msg["Subject"] = subject
-        msg["From"] = formataddr((display, from_email))
-        msg["To"] = to_mail
-        msg.set_content(body_text, charset="utf-8")
-        fname = f"Квитанция_{operation_id or 'receipt'}.pdf"
-        msg.add_attachment(
-            pdf_bytes,
-            maintype="application",
-            subtype="pdf",
-            filename=fname,
-        )
-
-        ctx = ssl.create_default_context()
-        if use_ssl and port == 465:
-            with smtplib.SMTP_SSL(host, port, context=ctx, timeout=60) as smtp:
-                if user and password:
-                    smtp.login(user, password)
-                smtp.send_message(msg)
-        else:
-            with smtplib.SMTP(host, port, timeout=60) as smtp:
-                smtp.ehlo()
-                smtp.starttls(context=ctx)
-                smtp.ehlo()
-                if user and password:
-                    smtp.login(user, password)
-                smtp.send_message(msg)
-        print(f"[transfer] receipt_mail: отправлено → {to_mail} (PDF {len(pdf_bytes)} байт, From: {display!r})")
-    except Exception as ex:
-        print(f"[transfer] receipt_mail: ошибка SMTP: {ex}")
-
-
-def _try_serve_receipt_pdf_response(flow: http.HTTPFlow, url_raw: str) -> bool:
-    """
-    Подмена ответа для URL с payment_receipt_pdf / operation_statement_pdf.
-    Вызывается до проверок JSON/тела — как у кнопки «Квитанция» в мок‑переводе.
-    Ручные операции и мок из истории: history.ensure_operation_receipt_pdf_path.
-    """
-    ul = url_raw.lower()
-    if "payment_receipt_pdf" not in ul and "operation_statement_pdf" not in ul:
-        return False
-    if not is_bank_flow(flow):
-        return False
-
-    operation_id = _parse_receipt_operation_id_from_flow(flow)
-    if not operation_id and fake_history:
-        operation_id = fake_history[0].get("id")
-
-    pdf_path = _get_receipt_pdf_for_operation(operation_id)
-
-    if pdf_path and Path(pdf_path).exists():
         with open(pdf_path, "rb") as f:
             flow.response.content = f.read()
         flow.response.headers["Content-Type"] = "application/pdf"
@@ -1179,64 +906,6 @@ def _try_serve_receipt_pdf_response(flow: http.HTTPFlow, url_raw: str) -> bool:
     return False
 
 
-def _parse_query_first(url_raw: str, *keys: str) -> str:
-    try:
-        q = urllib.parse.parse_qs(urllib.parse.urlparse(url_raw).query)
-        for k in keys:
-            vals = q.get(k) or []
-            if vals and str(vals[0]).strip():
-                return str(vals[0]).strip()
-    except Exception:
-        pass
-    return ""
-
-
-def _maybe_stub_send_receipt_mock(flow: http.HTTPFlow, url_raw: str) -> bool:
-    """
-    Запрос «отправить квитанцию на почту»: для реального UNIFIED_* банк не создавал операцию —
-    сервер может отвечать OK без доставки или ошибкой в payload. Для моков отдаём явный OK.
-    Если в config.json включён receipt_mail, во вложении уходит тот же PDF, что для квитанции в приложении,
-    с полем From из from_display_name (не почта банка).
-    """
-    ul = url_raw.lower()
-    if "send_receipt" not in ul:
-        return False
-    if flow.request.method.upper() != "GET":
-        return False
-    pid = _parse_query_first(
-        url_raw, "paymentId", "paymentid", "payment_id", "operationId", "operation_id"
-    )
-    pid = history_mod.canonical_fake_transfer_op_id(pid)
-    if not pid or not history_mod.op_id_in_fake_history_files(pid):
-        return False
-    to_mail = _parse_query_first(url_raw, "to", "email", "mail")
-    flow.response.status_code = 200
-    flow.response.headers["Content-Type"] = "application/json; charset=utf-8"
-    flow.response.text = json.dumps(
-        {
-            "resultCode": "OK",
-            "trackingId": "MOCK_RECEIPT_MAIL",
-            "payload": {"status": "ACCEPTED", "sent": True, "destination": to_mail},
-        },
-        ensure_ascii=False,
-    )
-    rm = (load_config() or {}).get("receipt_mail") or {}
-    if to_mail and rm.get("enabled"):
-        pdf_path = _get_receipt_pdf_for_operation(pid)
-        if pdf_path and Path(pdf_path).exists():
-            threading.Thread(
-                target=_send_receipt_email_worker,
-                args=(to_mail, pid, pdf_path),
-                daemon=True,
-            ).start()
-            print(f"[transfer] send_receipt → OK + receipt_mail в фоне на {to_mail}")
-        else:
-            print("[transfer] send_receipt → OK, но PDF не найден — письмо не отправлено")
-    else:
-        print("[transfer] send_receipt → заглушка OK (включите receipt_mail.enabled для SMTP)")
-    return True
-
-
 def response(flow: http.HTTPFlow) -> None:
     if not flow.response:
         return
@@ -1244,29 +913,6 @@ def response(flow: http.HTTPFlow) -> None:
     if not is_bank_flow(flow):
         return
     ensure_response_decoded(flow)
-    if _maybe_stub_send_receipt_mock(flow, url_raw):
-        return
-    # 422 на вспомогательных API рвёт сценарии (перевод, кэш) — отдаём пустой OK.
-    ul = url_raw.lower()
-    if flow.response.status_code == 422:
-        if "social-api.t-bank-app.ru" in ul or "/social/" in ul:
-            flow.response.status_code = 200
-            flow.response.text = '{"resultCode":"OK","payload":null}'
-            return
-        if "gtech-tax-deduction" in ul or "tax-deduction" in ul:
-            flow.response.status_code = 200
-            flow.response.text = '{"resultCode":"OK","payload":{}}'
-            return
-        if "payment_commission" in ul:
-            flow.response.status_code = 200
-            flow.response.text = json.dumps(_payment_commission_ok_dict(), ensure_ascii=False)
-            return
-        if _url_matches_transfer_aux(ul):
-            flow.response.status_code = 200
-            flow.response.text = '{"resultCode":"OK","payload":null}'
-            return
-    if _neutralize_transfer_aux_http_errors(flow, ul):
-        return
     if _try_serve_receipt_pdf_response(flow, url_raw):
         return
     if not flow.response.text:
@@ -1276,7 +922,7 @@ def response(flow: http.HTTPFlow) -> None:
         return
 
     ct = (flow.response.headers.get("content-type") or "").lower()
-    if _is_v1_operations_feed_url(url_raw) and "application/json" in ct:
+    if "/api/common/v1/operations" in url and "application/json" in ct:
         try:
             data = json.loads(flow.response.text)
             if isinstance(data, dict) and isinstance(data.get("payload"), list):
@@ -1291,30 +937,15 @@ def response(flow: http.HTTPFlow) -> None:
     if any(x in url for x in ["get_requisites", "payment_commission", "pay", "providers"]):
         log_bank_fio(flow)
 
-    # Не использовать подстроку "event" — она входит в "events" (ленты встраиваемого банка).
-    if any(x in url for x in ["web-gateway", "providers/find", "payment_commission", "get_requisites", "ping", "session_status", "bundles", "log/collect", "histogram"]) or "/gateway/v1/events" in url:
+    if any(x in url for x in ["web-gateway", "providers/find", "payment_commission", "get_requisites", "ping", "session_status", "bundles", "log/collect", "event", "histogram"]):
         return
 
-    if _is_v1_pay_url(url_raw) and flow.request.method == "POST":
+    if "/api/common/v1/pay" in url and flow.request.method == "POST":
         transfer_data["date_full"] = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-        tid = str(transfer_data.get("transaction_id") or "").strip()
-        if not tid:
-            tid = generate_id()
-            transfer_data["transaction_id"] = tid
-        transfer_data["payment_id"] = tid
-        # Клиент дергает следующий экран по paymentId/operationId — без них нет анимации успеха.
-        fake = {
-            "resultCode": "OK",
-            "trackingId": tid,
-            "payload": {
-                "status": "OK",
-                "paymentId": tid,
-                "operationId": tid,
-                "paymentOperationId": tid,
-            },
-        }
+        transfer_data["payment_id"] = generate_id()
+        fake = {"resultCode": "OK", "trackingId": transfer_data.get("transaction_id"), "payload": {"status": "SUCCESS"}}
         flow.response.text = json.dumps(fake, ensure_ascii=False)
-        print(f"Экран успеха — Квитанция доступна (paymentId={tid})")
+        print("Экран успеха — Квитанция доступна")
         return
 
 def request(flow: http.HTTPFlow) -> None:
@@ -1328,21 +959,24 @@ def request(flow: http.HTTPFlow) -> None:
         if flow.response is not None:
             return
 
-    if not _is_v1_pay_url(flow.request.pretty_url or "") or flow.request.method != "POST":
+    if "/api/common/v1/pay" not in url or flow.request.method != "POST":
         return
 
     body_text = flow.request.get_text() or ""
-    ctype = flow.request.headers.get("Content-Type") or ""
-    amount, phone, name = _parse_v1_pay_request_body(body_text, ctype)
-    if amount <= 0:
+    amount = 0.0
+    phone = None
+    name = None
+
+    if "payParameters=" in body_text:
         try:
-            amount = float(transfer_data.get("amount") or 0)
-        except (TypeError, ValueError):
-            amount = 0.0
-    if not phone:
-        phone = transfer_data.get("receiver_phone")
-    if not name:
-        name = transfer_data.get("receiver_name")
+            param = body_text.split("payParameters=")[1].split("&")[0]
+            data = safe_json(unquote(param))
+            if data:
+                amount = float(data.get("moneyAmount") or data.get("amount") or 0)
+                phone = data.get("providerFields", {}).get("pointer")
+                name = data.get("providerFields", {}).get("maskedFIO")
+        except:
+            pass
 
     if amount > 0:
         _fake_payment_done = False

@@ -10,9 +10,6 @@ if [[ ! -x venv/bin/python ]]; then
   exit 1
 fi
 
-# Та же проверка, что после git pull не остался старый bank_filter без t-bank-app (*.t-bank-app.ru).
-./venv/bin/python -c "from bank_filter import _BANK_KEYS; assert 't-bank-app' in _BANK_KEYS, 'Обновите репозиторий: в bank_filter.py нужен ключ t-bank-app для Drive Transit / встраиваемого банка'"
-
 # Кириллица в панели / описаниях операций / PDF на минимальных образах Debian/Ubuntu
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 if [[ -z "${LC_ALL:-}" ]]; then

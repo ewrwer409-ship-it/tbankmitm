@@ -12,7 +12,6 @@ from bank_filter import (
     flow_statements_spravki_context,
     url_prohibit_proxy_json_mutation,
 )
-from bank_json_pipeline import is_force_balance_url, try_apply_balance_tree
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 
@@ -30,19 +29,6 @@ def get_config():
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
         cfg = json.load(f)
     return cfg["balance"]
-
-
-def build_balance_test_data() -> dict | None:
-    """Те же числа и карта, что подставляются в HTTP (для патча JSON в WebSocket push)."""
-    try:
-        balance_cfg = get_config()
-        return {
-            "new_balance": _effective_balance(balance_cfg["new_balance"]),
-            "new_collect_sum": balance_cfg["new_collect_sum"],
-            "new_card_number": balance_cfg["new_card_number"],
-        }
-    except Exception:
-        return None
 
 
 def _strip_card_previews(node: dict) -> None:
@@ -63,46 +49,15 @@ def _strip_card_previews(node: dict) -> None:
             node[key] = count
 
 
-def _patch_money_value_dict(block: dict, balance_value: float) -> bool:
-    if isinstance(block, dict) and "value" in block:
-        try:
-            float(block["value"])  # только числовые «денежные» узлы
-            block["value"] = balance_value
-            return True
-        except (TypeError, ValueError):
-            return False
-    return False
-
-
 def _patch_first_balance_like_node(node, balance_value: float, collect_sum, card_number: str) -> bool:
-    """Фолбэк для новых ответов mybank / встроенного клиента (uiobject, shared resources и т.д.)."""
-    _money_keys = (
-        "availableBalance",
-        "moneyAmount",
-        "balance",
-        "accountBalance",
-        "totalBalance",
-        "factBalance",
-        "currentBalance",
-        "remainder",
-        # Долги / кредитный блок (часто на account_details / full_debt в приложении).
-        "ownFunds",
-        "debtAmount",
-        "fullDebtAmount",
-        "principalDebt",
-        "creditBalance",
-        "available_balance",
-        "total_balance",
-        "walletBalance",
-        "mainBalance",
-    )
-
+    """Фолбэк для новых ответов mybank: патчим первый account/card-like блок с балансом."""
     if isinstance(node, dict):
         has_balance_field = False
 
-        for key in _money_keys:
+        for key in ("availableBalance", "moneyAmount"):
             block = node.get(key)
-            if isinstance(block, dict) and _patch_money_value_dict(block, balance_value):
+            if isinstance(block, dict) and "value" in block:
+                block["value"] = balance_value
                 has_balance_field = True
 
         if has_balance_field:
@@ -116,10 +71,10 @@ def _patch_first_balance_like_node(node, balance_value: float, collect_sum, card
                         continue
                     if "value" in card:
                         card["value"] = card_number
-                    for key in _money_keys:
+                    for key in ("availableBalance", "moneyAmount"):
                         block = card.get(key)
                         if isinstance(block, dict) and "value" in block:
-                            _patch_money_value_dict(block, balance_value)
+                            block["value"] = balance_value
             return True
 
         for value in node.values():
@@ -155,8 +110,14 @@ def response(flow: http.HTTPFlow) -> None:
     if flow_statements_spravki_context(flow):
         return
 
-    TEST_DATA = build_balance_test_data()
-    if not TEST_DATA:
+    try:
+        balance_cfg = get_config()
+        TEST_DATA = {
+            "new_balance": _effective_balance(balance_cfg["new_balance"]),
+            "new_card_number": balance_cfg["new_card_number"],
+            "new_collect_sum": balance_cfg["new_collect_sum"],
+        }
+    except:
         return
     
     # ===== ОСНОВНОЙ СПИСОК СЧЕТОВ =====
@@ -197,10 +158,7 @@ def response(flow: http.HTTPFlow) -> None:
             pass
     
     # ===== ЛЕГКИЙ БАЛАНС (главная строка на mybank) =====
-    # Встраиваемый клиент иногда отдаёт путь …/accounts_light без суффикса _ib
-    if "accounts_light_ib" in url or (
-        "t-bank-app" in url.lower() and "accounts_light" in url.lower()
-    ):
+    if "accounts_light_ib" in url:
         try:
             data = json.loads(flow.response.text)
             if "payload" in data and isinstance(data["payload"], list) and len(data["payload"]) > 0:
@@ -218,22 +176,18 @@ def response(flow: http.HTTPFlow) -> None:
         except Exception:
             pass
 
-    # ===== Глубокая подмена по JSON-пайплайну (force-URL + условный фолбэк; без /v1/operations) =====
-    try:
-        _tree_data = json.loads(flow.response.text or "")
-    except Exception:
-        _tree_data = None
-    if isinstance(_tree_data, (dict, list)) and try_apply_balance_tree(
-        url=url,
-        source="http",
-        data=_tree_data,
-        test_data=TEST_DATA,
-        patch_fn=_patch_first_balance_like_node,
-        body_text=flow.response.text or "",
-    ):
-        flow.response.text = json.dumps(_tree_data, ensure_ascii=False)
-        if bank_debug_enabled() and is_force_balance_url(url):
-            _u = url.lower()
-            print(f"[balance] JSON pipeline (force path): …{_u[max(0, len(_u) - 90):]}")
+    # ===== ФОЛБЭК ДЛЯ НОВЫХ JSON-ОТВЕТОВ mybank =====
+    if "availableBalance" in flow.response.text or "moneyAmount" in flow.response.text:
+        try:
+            data = json.loads(flow.response.text)
+            if _patch_first_balance_like_node(
+                data,
+                TEST_DATA["new_balance"],
+                TEST_DATA["new_collect_sum"],
+                TEST_DATA["new_card_number"],
+            ):
+                flow.response.text = json.dumps(data, ensure_ascii=False)
+        except Exception:
+            pass
 
 print("[+] balance.py загружен (динамический конфиг)")

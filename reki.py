@@ -56,11 +56,7 @@ def response(flow: http.HTTPFlow) -> None:
             if "account_group_requisites" in url and "payload" in data and len(data["payload"]) > 0:
                 if "id" in data["payload"][0]:
                     real_id = data["payload"][0]["id"]
-            elif (
-                ("accounts_light_ib" in url or ("t-bank-app" in url.lower() and "accounts_light" in url.lower()))
-                and "payload" in data
-                and isinstance(data["payload"], list)
-            ):
+            elif "accounts_light_ib" in url and "payload" in data and isinstance(data["payload"], list):
                 for item in data["payload"]:
                     if "id" in item:
                         real_id = item["id"]
@@ -70,9 +66,7 @@ def response(flow: http.HTTPFlow) -> None:
     
     # Подмена номера договора только у основного продукта (как в реквизитах).
     # Раньше подменяли id у ВСЕХ карт/счетов в списке — из‑за этого в «Мой банк» дублировались продукты.
-    if "accounts_light_ib" in url or (
-        "t-bank-app" in url.lower() and "accounts_light" in url.lower()
-    ):
+    if "accounts_light_ib" in url:
         try:
             data = json.loads(flow.response.text)
             if "payload" in data and isinstance(data["payload"], list):

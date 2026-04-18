@@ -7,14 +7,11 @@ from __future__ import annotations
 import os
 
 # Порядок важен: tls passthrough первым; operation_detail после history; panel после name/reki; инжектор в конце.
-# upstream_response_log — строго последний: response() срабатывает первым (до подмен) и пишет «сырой» ответ.
 MITM_ADDON_SCRIPTS: tuple[str, ...] = (
     "tls_passthrough_hosts.py",
-    "traffic_log_hosts.py",
     "transfer.py",
     "controller.py",
     "balance.py",
-    "ws_bank_push_patch.py",
     "history.py",
     "operation_detail.py",
     "name.py",
@@ -22,7 +19,6 @@ MITM_ADDON_SCRIPTS: tuple[str, ...] = (
     "panel_bridge.py",
     "browser_ops_injector.py",
     "tbank_sbp_debit_injector.py",
-    "upstream_response_log.py",
 )
 
 

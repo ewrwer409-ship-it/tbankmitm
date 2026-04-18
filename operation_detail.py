@@ -1,6 +1,5 @@
 """
-Подмена JSON для экрана операции, чека/справки и вложенных структур:
-id ручных операций (m_...) и операций мок‑перевода из fake_history (last_transfer*.json).
+Подмена JSON для экрана операции, чека/справки и вложенных структур по id ручных операций (m_...).
 Загружать в mitm ПОСЛЕ history.py.
 """
 from mitmproxy import http
@@ -9,7 +8,6 @@ import copy
 import re
 import sys
 import os
-from typing import Optional
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -28,7 +26,6 @@ _UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}"
 )
 _MANUAL_RE = re.compile(r"\bm_[a-zA-Z0-9_]+\b")
-_UNIFIED_OP_RE = re.compile(r"(?i)\bunified_\d+\b")
 
 def _format_phone_ru(phone: str) -> str:
     digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
@@ -45,19 +42,9 @@ def _extract_ids_from_url(url: str) -> list:
     out = []
     out.extend(m.group(0).lower() for m in _UUID_RE.finditer(url or ""))
     out.extend(m.group(0) for m in _MANUAL_RE.finditer(url or ""))
-    out.extend(m.group(0) for m in _UNIFIED_OP_RE.finditer(url or ""))
     try:
         q = parse_qs(urlparse(url).query)
-        for key in (
-            "operationId",
-            "operation_id",
-            "id",
-            "operationID",
-            "parentOperationId",
-            "rootOperationId",
-            "extOperationId",
-            "extoperationid",
-        ):
+        for key in ("operationId", "operation_id", "id", "operationID", "parentOperationId", "rootOperationId"):
             for val in q.get(key, []):
                 if val and (val.startswith("m_") or len(val) > 10):
                     out.append(val.strip())
@@ -68,17 +55,10 @@ def _extract_ids_from_url(url: str) -> list:
 
 def _collect_ids_from_json(obj, out: set) -> None:
     if isinstance(obj, dict):
-        for k in ("id", "operationId", "parentOperationId", "rootOperationId", "extOperationId"):
+        for k in ("id", "operationId", "parentOperationId", "rootOperationId"):
             v = obj.get(k)
-            if not isinstance(v, str):
-                continue
-            vs = v.strip()
-            if not vs:
-                continue
-            if vs.startswith("m_") or _UUID_RE.fullmatch(vs):
-                out.add(vs)
-            elif re.match(r"(?i)^unified_\d+", vs) and len(vs) >= 12:
-                out.add(history.canonical_fake_transfer_op_id(vs))
+            if isinstance(v, str) and (v.startswith("m_") or _UUID_RE.fullmatch(v)):
+                out.add(v)
         for v in obj.values():
             _collect_ids_from_json(v, out)
     elif isinstance(obj, list):
@@ -149,12 +129,6 @@ def _url_suggests_detail_or_receipt(u: str) -> bool:
         return False
     if any(b in u for b in ("histogram", "category_list", "graphql", "web-gateway", "log/collect")):
         return False
-    try:
-        path = (urlparse(u).path or "").lower()
-        if re.search(r"/operations/[^/?#\s]+$", path):
-            return True
-    except Exception:
-        pass
     hints = (
         "receipt",
         "fiscal",
@@ -163,12 +137,8 @@ def _url_suggests_detail_or_receipt(u: str) -> bool:
         "operation/info",
         "/operation/",
         "operation_detail",
-        "operation/view",
         "getoperation",
         "money-session",
-        "cashflow",
-        "cash-flow",
-        "cash_flow",
         "slip",
         "cheque",
         "check/",
@@ -181,14 +151,16 @@ def _url_suggests_detail_or_receipt(u: str) -> bool:
         "statement?",
         "=statement",
         "&statement",
-        "card_credentials",
-        "get_requisites",
+        "movement",
+        "registry",
     )
     return any(h in u for h in hints)
 
 
 def request(flow: http.HTTPFlow) -> None:
     history.ensure_manual_operations_fresh()
+    if not history.manual_operations:
+        return
     if not is_bank_flow(flow):
         return
     _url0 = flow.request.pretty_url or ""
@@ -198,23 +170,14 @@ def request(flow: http.HTTPFlow) -> None:
         return
     manual_ids = set(history.manual_operations.keys())
     ids_in_flow = _extract_ids_from_flow(flow)
-    target_manual = [mid for mid in ids_in_flow if mid in manual_ids]
-    target_fake = [fid for fid in ids_in_flow if history.op_id_in_fake_history_files(fid)]
-    if not target_manual and not target_fake:
+    target_ids = [mid for mid in ids_in_flow if mid in manual_ids]
+    if not target_ids:
         return
     replacement_id, replacement_time = _pick_reference_operation()
     if not replacement_id:
-        # Нет операции в кэше для подмены id — всё равно помечаем мок, чтобы response()
-        # мог отдать синтетический OK вместо 404 от банка (анимация успеха / экран перевода).
-        if target_fake:
-            try:
-                flow.metadata["manual_detail_id"] = target_fake[0]
-                flow.metadata["replacement_operation_id"] = ""
-            except Exception:
-                pass
         return
 
-    target_id = target_manual[0] if target_manual else target_fake[0]
+    target_id = target_ids[0]
     try:
         flow.metadata["manual_detail_id"] = target_id
         flow.metadata["replacement_operation_id"] = replacement_id
@@ -388,45 +351,33 @@ def _patch_receipt_like_node(obj: dict, man: dict) -> bool:
     return changed
 
 
-def _patch_tree(obj, manual_ids: set, fake_manual_by_id: Optional[dict] = None) -> bool:
-    fake_manual_by_id = fake_manual_by_id or {}
+def _patch_tree(obj, manual_ids: set) -> bool:
     changed = False
 
     def visit(node):
         nonlocal changed
         if isinstance(node, dict):
             oid = node.get("id")
-            if isinstance(oid, str):
-                man = None
-                if oid in manual_ids:
-                    man = history.manual_operations[oid]
-                elif oid in fake_manual_by_id:
-                    man = fake_manual_by_id[oid]
-                if man is not None:
-                    merged = history.overlay_manual_on_template(
-                        copy.deepcopy(node),
-                        oid,
-                        man,
-                        min_time_ms=None,
-                        clamp_to_wall_ms=False,
-                    )
-                    node.clear()
-                    node.update(merged)
-                    changed = True
-                    return
+            if isinstance(oid, str) and oid in manual_ids:
+                man = history.manual_operations[oid]
+                merged = history.overlay_manual_on_template(
+                    copy.deepcopy(node),
+                    oid,
+                    man,
+                    min_time_ms=None,
+                    clamp_to_wall_ms=False,
+                )
+                node.clear()
+                node.update(merged)
+                changed = True
+                return
             op_ref = node.get("operationId")
-            ref_man = None
-            if isinstance(op_ref, str):
-                if op_ref in manual_ids:
-                    ref_man = history.manual_operations.get(op_ref)
-                elif op_ref in fake_manual_by_id:
-                    ref_man = fake_manual_by_id[op_ref]
             if (
                 isinstance(op_ref, str)
-                and ref_man is not None
+                and op_ref in manual_ids
                 and node.get("id") != op_ref
             ):
-                if _patch_receipt_like_node(node, ref_man):
+                if _patch_receipt_like_node(node, history.manual_operations[op_ref]):
                     changed = True
             for v in node.values():
                 visit(v)
@@ -435,226 +386,6 @@ def _patch_tree(obj, manual_ids: set, fake_manual_by_id: Optional[dict] = None) 
                 visit(x)
 
     visit(obj)
-    return changed
-
-
-def _list_contains_source_card_block(blocks: list) -> bool:
-    """Есть ли блок источника (карта/остаток), чтобы не дублировать."""
-    for block in blocks:
-        if not isinstance(block, dict):
-            continue
-        hay = " ".join(
-            str(block.get(k) or "").lower()
-            for k in ("title", "subtitle", "productName", "accountName", "cardName", "description", "type")
-        )
-        if "black" in hay or "дебет" in hay or "карт" in hay:
-            return True
-        if isinstance(block.get("availableBalance"), dict) or isinstance(block.get("moneyAmount"), dict):
-            return True
-        card = block.get("card")
-        if isinstance(card, dict) and (card.get("cardNumber") or card.get("ucid")):
-            return True
-    return False
-
-
-def _synthetic_transfer_source_block(
-    balance_value: float,
-    account_mask: str,
-    account_name: str,
-    transfer_title: str,
-    card_ucid: str,
-    card_id: str,
-    account_id: str,
-) -> dict:
-    """Минимальный блок «Перевод с … / Black», если бэкенд вернул только реквизиты."""
-    return {
-        "type": "transferSource",
-        "title": transfer_title,
-        "subtitle": account_name,
-        "productName": account_name,
-        "accountName": account_name,
-        "cardName": account_name,
-        "description": account_name,
-        "cardNumber": account_mask,
-        "availableBalance": {"value": balance_value, "currency": "RUB"},
-        "moneyAmount": {"value": balance_value, "currency": "RUB"},
-        "ucid": card_ucid,
-        "card": {"id": card_id, "ucid": card_ucid, "cardNumber": account_mask},
-        "account": {"id": account_id},
-    }
-
-
-def _iter_detail_payload_dicts(root: dict) -> list:
-    """Все dict-контейнеры экрана деталей (iOS часто кладёт данные в result.data.payload)."""
-    out = []
-    seen = set()
-
-    def add(d):
-        if isinstance(d, dict) and id(d) not in seen:
-            seen.add(id(d))
-            out.append(d)
-
-    if not isinstance(root, dict):
-        return out
-    pl = root.get("payload")
-    if isinstance(pl, dict):
-        add(pl)
-    res = root.get("result")
-    if isinstance(res, dict):
-        pl = res.get("payload")
-        if isinstance(pl, dict):
-            add(pl)
-        data = res.get("data")
-        if isinstance(data, dict):
-            pl = data.get("payload")
-            if isinstance(pl, dict):
-                add(pl)
-    data = root.get("data")
-    if isinstance(data, dict):
-        pl = data.get("payload")
-        if isinstance(pl, dict):
-            add(pl)
-    view = root.get("view")
-    if isinstance(view, dict):
-        pl = view.get("payload")
-        if isinstance(pl, dict):
-            add(pl)
-    if not out and any(
-        k in root
-        for k in (
-            "blocks",
-            "sections",
-            "widgets",
-            "operation",
-            "documents",
-            "hasStatement",
-            "hasReceipt",
-        )
-    ):
-        add(root)
-    return out
-
-
-def _inject_transfer_into_payload_dict(
-    payload: dict,
-    typ: str,
-    balance_value: float,
-    account_mask: str,
-    account_name: str,
-    transfer_block_title: str,
-    card_ucid: str,
-    card_id: str,
-    account_id: str,
-) -> bool:
-    """Один объект payload: документы + блок Перевод/Пополнение + рекурсия в payload.operation."""
-    changed = False
-    if not isinstance(payload, dict):
-        return False
-    if payload.get("hasStatement") is not True:
-        payload["hasStatement"] = True
-        changed = True
-    if payload.get("hasReceipt") is not True and typ == "Debit":
-        payload["hasReceipt"] = True
-        changed = True
-    docs = payload.get("documents")
-    if not isinstance(docs, list) or len(docs) == 0:
-        payload["documents"] = [
-            {"type": "Receipt", "title": "Квитанция", "available": True},
-            {"type": "Certificate", "title": "Справка по операции", "available": True},
-        ]
-        changed = True
-
-    synth = _synthetic_transfer_source_block(
-        balance_value,
-        account_mask,
-        account_name,
-        transfer_block_title,
-        card_ucid,
-        card_id,
-        account_id,
-    )
-    inserted = False
-    for key in (
-        "blocks",
-        "sections",
-        "groups",
-        "widgets",
-        "details",
-        "panels",
-        "screens",
-        "cards",
-        "content",
-        "items",
-    ):
-        lst = payload.get(key)
-        if not isinstance(lst, list):
-            continue
-        if lst:
-            if not _list_contains_source_card_block(lst):
-                lst.insert(0, synth)
-                changed = True
-            inserted = True
-            break
-        payload[key] = [synth]
-        changed = True
-        inserted = True
-        break
-    if not inserted:
-        bl = payload.setdefault("blocks", [])
-        if not isinstance(bl, list):
-            bl = []
-            payload["blocks"] = bl
-        if not _list_contains_source_card_block(bl):
-            bl.insert(0, synth)
-            changed = True
-
-    nested = payload.get("operation")
-    if isinstance(nested, dict):
-        nested_root = {"payload": nested}
-        if _inject_payload_card_documents_and_flags(
-            nested_root,
-            typ,
-            balance_value,
-            account_mask,
-            account_name,
-            transfer_block_title,
-            card_ucid,
-            card_id,
-            account_id,
-        ):
-            changed = True
-
-    return changed
-
-
-def _inject_payload_card_documents_and_flags(
-    root: dict,
-    typ: str,
-    balance_value: float,
-    account_mask: str,
-    account_name: str,
-    transfer_block_title: str,
-    card_ucid: str,
-    card_id: str,
-    account_id: str,
-) -> bool:
-    """Добавляет флаги справки/квитанции и блок карты во все найденные payload экрана операции."""
-    if not isinstance(root, dict):
-        return False
-    changed = False
-    for payload in _iter_detail_payload_dicts(root):
-        if _inject_transfer_into_payload_dict(
-            payload,
-            typ,
-            balance_value,
-            account_mask,
-            account_name,
-            transfer_block_title,
-            card_ucid,
-            card_id,
-            account_id,
-        ):
-            changed = True
     return changed
 
 
@@ -715,10 +446,9 @@ def _patch_manual_detail_semantics(obj, man: dict) -> bool:
             return
         replacement = None
         replacement_label = None
-        phone_show = (formatted_phone or phone or "").strip()
         if "отправител" in label or "sender" in label:
-            if typ == "Debit" and phone_show:
-                replacement = formatted_phone or phone
+            if typ == "Debit" and formatted_phone:
+                replacement = formatted_phone
                 replacement_label = "Номер телефона"
             else:
                 replacement = sender_name
@@ -726,15 +456,8 @@ def _patch_manual_detail_semantics(obj, man: dict) -> bool:
         if "номер телефона" in label or label == "телефон" or "phone" in label:
             replacement = formatted_phone or phone
             replacement_label = "Номер телефона"
-        elif (
-            "получател" in label
-            or "recipient" in label
-            or ("фио" in label and ("получ" in label or "владел" in label))
-        ):
+        elif "получател" in label or "фио" in label or "recipient" in label:
             replacement = primary
-        elif typ == "Debit" and phone_show and label.strip() in ("фио", "fio"):
-            replacement = formatted_phone or phone
-            replacement_label = "Номер телефона"
         elif "назначение" in label or "beneficiary" in label:
             replacement = beneficiary
         elif "счет" in label or "счёт" in label or "account" in label:
@@ -743,15 +466,10 @@ def _patch_manual_detail_semantics(obj, man: dict) -> bool:
             replacement = account_mask or account_name
         if replacement is None:
             return
-        wrote = False
         for value_key in value_keys:
             if value_key in node:
                 node[value_key] = replacement
-                wrote = True
                 changed = True
-        if not wrote:
-            node["fieldValue"] = replacement
-            changed = True
         if replacement_label is not None and label_key in node:
             node[label_key] = replacement_label
             changed = True
@@ -789,10 +507,7 @@ def _patch_manual_detail_semantics(obj, man: dict) -> bool:
 
             titleish = " ".join(
                 str(node.get(k) or "").strip().lower()
-                for k in (
-                    "title", "name", "description", "subtitle",
-                    "productName", "accountName", "cardName", "type", "operationType",
-                )
+                for k in ("title", "name", "description", "subtitle", "productName", "accountName", "cardName")
             )
             productish = any(
                 key in node for key in (
@@ -876,146 +591,23 @@ def _patch_manual_detail_semantics(obj, man: dict) -> bool:
                 visit(item)
 
     visit(obj)
-
-    def _coerce_debit_sender_requisite_rows(root):
-        """Перезаписывает уже заполненное ФИО в строке «Отправитель» при исходящем СБП, если в manual есть телефон."""
-        nonlocal changed
-        if typ != "Debit":
-            return
-        pv = (formatted_phone or phone or "").strip()
-        if not pv:
-            return
-        disp = formatted_phone or phone
-
-        def walk(n):
-            nonlocal changed
-            if isinstance(n, dict):
-                fk = str(n.get("fieldName") or n.get("label") or "").strip().lower()
-                if "отправител" in fk or "sender" in fk:
-                    for vk in (
-                        "fieldValue",
-                        "value",
-                        "primaryText",
-                        "text",
-                        "description",
-                        "subtitle",
-                    ):
-                        if vk in n and str(n.get(vk) or "").strip() != str(disp).strip():
-                            n[vk] = disp
-                            changed = True
-                    if not any(
-                        bool(str(n.get(vk) or "").strip())
-                        for vk in ("fieldValue", "value", "primaryText", "text")
-                    ):
-                        n["fieldValue"] = disp
-                        changed = True
-                    if "fieldName" in n and "отправител" in str(n.get("fieldName") or "").lower():
-                        n["fieldName"] = "Номер телефона"
-                        changed = True
-                    if "label" in n and (
-                        "отправител" in str(n.get("label") or "").lower()
-                        or "sender" in str(n.get("label") or "").lower()
-                    ):
-                        n["label"] = "Номер телефона"
-                        changed = True
-                for v in n.values():
-                    walk(v)
-            elif isinstance(n, list):
-                for x in n:
-                    walk(x)
-
-        walk(root)
-
-    _coerce_debit_sender_requisite_rows(obj)
-
-    def _fill_missing_field_values(node):
-        nonlocal changed
-        if isinstance(node, dict):
-            fk = str(node.get("fieldName") or "").strip().lower()
-            if fk:
-                has_val = any(
-                    bool(str(node.get(k) or "").strip())
-                    for k in ("fieldValue", "value", "primaryText", "text", "subtitle")
-                )
-                if not has_val:
-                    rep = None
-                    if "отправител" in fk:
-                        rep = (formatted_phone or phone) if typ == "Debit" else sender_name
-                    elif "получател" in fk or ("фио" in fk and ("получ" in fk or "владел" in fk)):
-                        rep = primary
-                    elif typ == "Debit" and (formatted_phone or phone) and fk.strip() in ("фио", "fio"):
-                        rep = formatted_phone or phone
-                    elif "телефон" in fk or fk == "phone":
-                        rep = formatted_phone or phone
-                    elif "назначен" in fk:
-                        rep = beneficiary
-                    elif "счет" in fk or "счёт" in fk:
-                        rep = external_account or account_mask
-                    elif "карт" in fk:
-                        rep = account_mask
-                    elif "тип" in fk and "перевод" in fk:
-                        rep = "Система быстрых платежей"
-                    if rep:
-                        node["fieldValue"] = rep
-                        changed = True
-            for v in node.values():
-                _fill_missing_field_values(v)
-        elif isinstance(node, list):
-            for x in node:
-                _fill_missing_field_values(x)
-
-    _fill_missing_field_values(obj)
-
-    if _inject_payload_card_documents_and_flags(
-        obj,
-        typ,
-        balance_value,
-        account_mask,
-        account_name,
-        transfer_block_title,
-        card_ucid,
-        card_id,
-        account_id,
-    ):
-        changed = True
     return changed
-
-
-def _build_fake_manual_map(ids_in_flow: set) -> dict:
-    """id мок‑операции → словарь как у manual для overlay/семантики."""
-    out = {}
-    for fid in ids_in_flow:
-        if not history.op_id_in_fake_history_files(fid):
-            continue
-        hop = history._fake_history_record_by_id(fid)
-        if hop:
-            out[fid] = history.fake_history_record_as_manual_dict(hop)
-    return out
-
-
-def _bank_json_result_is_error(txt: str) -> bool:
-    s = (txt or "").strip()
-    if not s.startswith("{"):
-        return False
-    try:
-        o = json.loads(s)
-        rc = str(o.get("resultCode") or "").upper()
-        if not rc or rc in ("OK", "SUCCESS"):
-            return False
-        return True
-    except Exception:
-        return False
 
 
 def response(flow: http.HTTPFlow) -> None:
     history.ensure_manual_operations_fresh()
+    if not history.manual_operations:
+        return
     if not is_bank_flow(flow):
         return
     if not flow.response:
         return
     ensure_response_decoded(flow)
-    sc = int(flow.response.status_code or 0)
     txt = flow.response.text or ""
+    if not txt.strip():
+        return
+    if not is_jsonish_response(flow):
+        return
 
     manual_ids = set(history.manual_operations.keys())
     url = flow.request.pretty_url or ""
@@ -1023,81 +615,8 @@ def response(flow: http.HTTPFlow) -> None:
         return
     if flow_statements_spravki_context(flow):
         return
-    ids_in_flow = set(_extract_ids_from_flow(flow))
-    ulow = (url or "").lower()
-    req_detail_like = (
-        _url_suggests_detail_or_receipt(url)
-        or "unified_" in ulow
-        or "operation/info" in ulow
-        or "operationby" in ulow
-        or "money-session" in ulow
-        or "cash-flow" in ulow
-        or "cash_flow" in ulow
-    )
-    meta_detail_id = flow.metadata.get("manual_detail_id")
-    if req_detail_like or isinstance(meta_detail_id, str):
-        try:
-            tstrip = (txt or "").strip()
-            if tstrip.startswith("{") or tstrip.startswith("["):
-                _collect_ids_from_json(json.loads(tstrip), ids_in_flow)
-        except Exception:
-            pass
-    fake_manual_by_id = _build_fake_manual_map(ids_in_flow)
-    if isinstance(meta_detail_id, str) and history.op_id_in_fake_history_files(meta_detail_id):
-        hop = history._fake_history_record_by_id(meta_detail_id)
-        if hop:
-            fake_manual_by_id.setdefault(meta_detail_id, history.fake_history_record_as_manual_dict(hop))
-
-    has_manual = bool(manual_ids & ids_in_flow)
-    has_fake = bool(fake_manual_by_id)
-    try:
-        _mid = flow.metadata.get("manual_detail_id")
-        meta_is_fake = (
-            isinstance(_mid, str) and bool(_mid) and history.op_id_in_fake_history_files(_mid)
-        )
-        meta_is_manual = isinstance(_mid, str) and bool(_mid) and _mid in manual_ids
-    except Exception:
-        meta_is_fake = False
-        meta_is_manual = False
-    if (
-        not has_manual
-        and not has_fake
-        and not _url_suggests_detail_or_receipt(url)
-        and not meta_is_fake
-        and not meta_is_manual
-    ):
-        return
-
-    fake_op_ids = [fid for fid in ids_in_flow if history.op_id_in_fake_history_files(fid)]
-    try:
-        md = flow.metadata.get("manual_detail_id")
-        if isinstance(md, str) and history.op_id_in_fake_history_files(md) and md not in fake_op_ids:
-            fake_op_ids.insert(0, md)
-    except Exception:
-        pass
-
-    detail_like = (
-        req_detail_like
-    )
-
-    if (
-        fake_op_ids
-        and detail_like
-        and (sc >= 400 or not (txt or "").strip() or _bank_json_result_is_error(txt))
-    ):
-        hop = history._fake_history_record_by_id(fake_op_ids[0])
-        if hop:
-            oid = str(hop.get("id") or fake_op_ids[0])
-            syn = {"resultCode": "OK", "trackingId": oid, "payload": copy.deepcopy(hop)}
-            flow.response.status_code = 200
-            flow.response.headers["Content-Type"] = "application/json; charset=utf-8"
-            txt = json.dumps(syn, ensure_ascii=False)
-            flow.response.text = txt
-            print(f"[operation_detail] синтетический OK для мок {oid} (было HTTP {sc})")
-
-    if not (txt or "").strip():
-        return
-    if not is_jsonish_response(flow):
+    ids_in_flow = _extract_ids_from_flow(flow)
+    if not (manual_ids & ids_in_flow) and not _url_suggests_detail_or_receipt(url):
         return
 
     try:
@@ -1105,49 +624,15 @@ def response(flow: http.HTTPFlow) -> None:
     except Exception:
         return
 
-    sec_changed = False
-    try:
-        if history.neutralize_is_suspicious_tree(data):
-            sec_changed = True
-        if history.neutralize_security_banner_strings(data):
-            sec_changed = True
-        if history.neutralize_aml_ui_flags(data):
-            sec_changed = True
-        if history.neutralize_compound_security_strings(data):
-            sec_changed = True
-    except Exception:
-        pass
-
     # Ключевой момент: мы подменяем id/time в запросе на reference-операцию,
     # поэтому в ответе detail-экрана backend часто возвращает id/references
-    # уже от reference. Тогда `_patch_tree` не находит узлы с нужным id.
-    # Возвращаем id назад: replacement_id -> manual_detail_id (ручная или мок).
+    # уже от reference. Тогда `_patch_tree` не находит узлы с `m_...` id.
+    # Возвращаем id назад: replacement_id -> manual_detail_id.
     try:
         manual_id = flow.metadata.get("manual_detail_id")
         replacement_id = flow.metadata.get("replacement_operation_id")
-        if (
-            isinstance(manual_id, str)
-            and isinstance(replacement_id, str)
-            and replacement_id
-            and (
-                manual_id in history.manual_operations
-                or history.op_id_in_fake_history_files(manual_id)
-            )
-        ):
+        if isinstance(manual_id, str) and manual_id in history.manual_operations and isinstance(replacement_id, str) and replacement_id:
             data = _replace_id_refs_in_json(data, replacement_id, manual_id)
-    except Exception:
-        pass
-
-    try:
-        ids_merged = set(ids_in_flow)
-        _collect_ids_from_json(data, ids_merged)
-        for fid in ids_merged:
-            if fid in fake_manual_by_id:
-                continue
-            if history.op_id_in_fake_history_files(fid):
-                hop = history._fake_history_record_by_id(fid)
-                if hop:
-                    fake_manual_by_id[fid] = history.fake_history_record_as_manual_dict(hop)
     except Exception:
         pass
 
@@ -1158,35 +643,14 @@ def response(flow: http.HTTPFlow) -> None:
         metadata_manual_id = None
     if metadata_manual_id in history.manual_operations:
         target_manual = history.manual_operations[metadata_manual_id]
-    elif isinstance(metadata_manual_id, str) and history.op_id_in_fake_history_files(metadata_manual_id):
-        hop = history._fake_history_record_by_id(metadata_manual_id)
-        if hop:
-            target_manual = history.fake_history_record_as_manual_dict(hop)
-    if target_manual is None:
-        for mid in ids_in_flow:
-            if mid in history.manual_operations:
-                target_manual = history.manual_operations[mid]
-                break
-            if history.op_id_in_fake_history_files(mid):
-                hop = history._fake_history_record_by_id(mid)
-                if hop:
-                    target_manual = history.fake_history_record_as_manual_dict(hop)
-                    break
-    changed = _patch_tree(data, manual_ids, fake_manual_by_id)
+    for mid in ids_in_flow:
+        if mid in history.manual_operations:
+            target_manual = history.manual_operations[mid]
+            break
+    changed = _patch_tree(data, manual_ids)
     if target_manual:
         changed = _patch_manual_detail_semantics(data, target_manual) or changed
-    try:
-        if history.neutralize_is_suspicious_tree(data):
-            sec_changed = True
-        if history.neutralize_security_banner_strings(data):
-            sec_changed = True
-        if history.neutralize_aml_ui_flags(data):
-            sec_changed = True
-        if history.neutralize_compound_security_strings(data):
-            sec_changed = True
-    except Exception:
-        pass
-    if changed or sec_changed:
+    if changed:
         flow.response.text = json.dumps(data, ensure_ascii=False)
         if bank_debug_enabled():
             print(f"[operation_detail] подмена ответа: {url[:160]}")
