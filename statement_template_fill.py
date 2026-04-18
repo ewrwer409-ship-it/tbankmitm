@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Выписка: копируем страницы из Выписка.pdf (insert_pdf). Текст — redact белым + insert_text
-по базовой линии шаблона (статика) / insert_textbox (сводка, колонтитул, суммы в ячейках).
+Выписка: копируем страницы из Выписка.pdf (insert_pdf). Тело таблицы — белый redact по clip
+(как в макете), без удаления вложенных PNG из файла (PDF_REDACT_IMAGE_NONE) + insert_text / insert_textbox.
 
-Шрифты для подставляемого текста — как в чеках: полные файлы TinkoffSans-Regular.ttf и
-TinkoffSans-Medium.ttf в папке tbankmitm (page.insert_font + fontfile). Если файлов нет —
-Segoe / Arial / DejaVu. Subset из PDF не используем (нет глифов для нового текста).
+Шрифты для сгенерированного текста: системные Arial / DejaVu (имена ресурсов JbRg/JbBd — без TinkoffSans-*,
+как ожидают PDF-проверки); знак ₽ — Symbola.ttf (ресурс F3 при наличии файла). TinkoffSans остаётся только
+в неизменённом тексте шаблона. При сбое — helv.
 
 Начертание: span flags + имя шрифта в шаблоне (Medium → жирная гарнитура).
 
@@ -19,6 +19,8 @@ import os
 import re
 import random
 import statistics
+import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -49,7 +51,10 @@ DEFAULT_CONTRACT_SIGN_DATE = "09.09.2023"
 
 
 def _symbola_font_path() -> Optional[str]:
-    """Glyph ₽ как в Выписка.pdf (span Symbola). Не в репозитории — ищем в системных шрифтах."""
+    """Glyph ₽: рядом с модулем symbola.ttf, иначе системные шрифты (как в Выписка.pdf)."""
+    local = os.path.join(_script_dir(), "symbola.ttf")
+    if os.path.isfile(local):
+        return local
     wd = os.environ.get("WINDIR") or os.environ.get("SystemRoot") or r"C:\Windows"
     fd = os.path.join(wd, "Fonts")
     for name in ("symbola.ttf", "Symbola.ttf", "symbola.otf", "Symbola.otf"):
@@ -96,12 +101,38 @@ def _font_paths_regular_bold() -> Tuple[Optional[str], Optional[str]]:
     return None, None
 
 
+def _font_paths_statement_embedding() -> Tuple[Optional[str], Optional[str]]:
+    """
+    Пары TTF для подставляемого текста выписки: Arial / DejaVu — в PDF не появляются имена TinkoffSans-*.
+    """
+    wd = os.environ.get("WINDIR") or os.environ.get("SystemRoot") or r"C:\Windows"
+    fd = os.path.join(wd, "Fonts")
+    arial = os.path.join(fd, "arial.ttf")
+    arialbd = os.path.join(fd, "arialbd.ttf")
+    if os.path.isfile(arial) and os.path.isfile(arialbd):
+        return arial, arialbd
+    if os.path.isfile(arial):
+        return arial, arial
+    for reg, bd in (
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+        (
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        ),
+    ):
+        if os.path.isfile(reg):
+            return reg, bd if os.path.isfile(bd) else reg
+    return _font_paths_regular_bold()
+
+
 def _text_width_mm(text: str, fontsize: float, use_emphasis: bool) -> float:
-    """Ширина строки в pt для Tinkoff TTF (get_text_length не знает my_normal)."""
+    """Ширина строки в pt для того же TTF, что и при отрисовке выписки."""
     s = text or ""
     if not s:
         return 0.0
-    reg_p, bd_p = _font_paths_regular_bold()
+    reg_p, bd_p = _font_paths_statement_embedding()
+    if not reg_p or not os.path.isfile(reg_p):
+        reg_p, bd_p = _font_paths_regular_bold()
     path = bd_p if use_emphasis and bd_p else reg_p
     if path and os.path.isfile(path):
         try:
@@ -186,7 +217,13 @@ def _span_covering_needle_where(
 
 
 _STMT_FONT_PATHS = "_stmt_font_paths"
-_STMT_SYMBOLA_REG = "_stmt_symbola_registered"
+_STMT_FONT_PATHS_STMT = "_stmt_statement_embed_font_paths"
+_STMT_FONT_REG_NAME = "TinkoffSans-Regular"
+_STMT_FONT_BD_NAME = "TinkoffSans-Medium"
+# Имя ресурса Type0 для Symbola (требование проверок «identifier: F3»).
+_STMT_SYMBOLA_RES = "F3"
+_STMT_JASPER_REG = "JbRg"
+_STMT_JASPER_BD = "JbBd"
 
 # Тексты нижнего колонтитула — как в шаблоне Выписка.pdf (стр. 0/1, dict-снимок).
 _STMT_TPL_FOOTER_L1 = (
@@ -197,8 +234,8 @@ _STMT_TPL_FOOTER_L2 = "БИК 044525974 ИНН 7710140679 КПП 771301001"
 
 def _register_template_fonts(page: fitz.Page) -> Tuple[str, str]:
     """
-    (regular, emphasis). Имена шрифтов как в чеках: my_normal, my_bold (или helv при сбое).
-    После apply_redactions() вызывать снова для этой страницы.
+    (regular, emphasis). Имена как в Выписка.pdf: TinkoffSans-Regular / TinkoffSans-Medium;
+    при конфликте с ресурсами страницы — fallback my_normal / my_bold.
     """
     doc = page.parent
     paths = getattr(doc, _STMT_FONT_PATHS, None)
@@ -211,23 +248,68 @@ def _register_template_fonts(page: fitz.Page) -> Tuple[str, str]:
     if not reg_path:
         return "helv", "helv"
 
+    reg_name = _STMT_FONT_REG_NAME
     try:
-        page.insert_font(fontname="my_normal", fontfile=reg_path)
+        page.insert_font(fontname=reg_name, fontfile=reg_path)
     except Exception:
-        return "helv", "helv"
-    bold_name = "my_normal"
+        try:
+            reg_name = "my_normal"
+            page.insert_font(fontname=reg_name, fontfile=reg_path)
+        except Exception:
+            return "helv", "helv"
+    bd_name = reg_name
     if bd_path and bd_path != reg_path:
         try:
-            page.insert_font(fontname="my_bold", fontfile=bd_path)
-            bold_name = "my_bold"
+            page.insert_font(fontname=_STMT_FONT_BD_NAME, fontfile=bd_path)
+            bd_name = _STMT_FONT_BD_NAME
         except Exception:
-            bold_name = "my_normal"
+            try:
+                bd_name = "my_bold"
+                page.insert_font(fontname=bd_name, fontfile=bd_path)
+            except Exception:
+                bd_name = reg_name
 
-    return "my_normal", bold_name
+    return reg_name, bd_name
+
+
+def _register_statement_fonts(page: fitz.Page) -> Tuple[str, str]:
+    """
+    Встраиваемые шрифты для всего текста, который мы рисуем заново: не TinkoffSans-* в словаре шрифтов.
+    """
+    doc = page.parent
+    paths = getattr(doc, _STMT_FONT_PATHS_STMT, None)
+    if paths is None:
+        reg_path, bd_path = _font_paths_statement_embedding()
+        setattr(doc, _STMT_FONT_PATHS_STMT, (reg_path, bd_path))
+    else:
+        reg_path, bd_path = paths
+    if not reg_path:
+        return "helv", "helv"
+    reg_name = _STMT_JASPER_REG
+    try:
+        page.insert_font(fontname=reg_name, fontfile=reg_path)
+    except Exception:
+        try:
+            reg_name = "my_normal"
+            page.insert_font(fontname=reg_name, fontfile=reg_path)
+        except Exception:
+            return "helv", "helv"
+    bd_name = reg_name
+    if bd_path and bd_path != reg_path:
+        try:
+            page.insert_font(fontname=_STMT_JASPER_BD, fontfile=bd_path)
+            bd_name = _STMT_JASPER_BD
+        except Exception:
+            try:
+                bd_name = "my_bold"
+                page.insert_font(fontname=bd_name, fontfile=bd_path)
+            except Exception:
+                bd_name = reg_name
+    return reg_name, bd_name
 
 
 def _ensure_cyrillic_font(page: fitz.Page) -> str:
-    r, _ = _register_template_fonts(page)
+    r, _ = _register_statement_fonts(page)
     return r
 
 
@@ -322,7 +404,7 @@ def _draw_baseline_texts(
     """(x, y_baseline, text, fontsize, flags, rgb, span) — без insert_textbox, без вертикального сдвига."""
     if not items:
         return
-    reg, bd = _register_template_fonts(page)
+    reg, bd = _register_statement_fonts(page)
     for x, y, txt, fs, flags, rgb, span in items:
         fn = _pick_draw_font(flags, reg, bd, span)
         page.insert_text((x, y), txt, fontname=fn, fontsize=fs, color=rgb)
@@ -684,14 +766,75 @@ def _measure_cols(tpl_path: str) -> _ColLayout:
         doc.close()
 
 
+def _rect_minus_rect(a: fitz.Rect, b: fitz.Rect) -> List[fitz.Rect]:
+    """a \\ b — до четырёх осесонаправленных прямоугольников (без дыр в зоне redact под PNG)."""
+    if not a.intersects(b) or b.is_empty or a.is_empty:
+        return [a] if not a.is_empty else []
+    out: List[fitz.Rect] = []
+    if a.y0 < b.y0:
+        r = fitz.Rect(a.x0, a.y0, a.x1, b.y0)
+        if not r.is_empty:
+            out.append(r)
+    if b.y1 < a.y1:
+        r = fitz.Rect(a.x0, b.y1, a.x1, a.y1)
+        if not r.is_empty:
+            out.append(r)
+    ym0, ym1 = max(a.y0, b.y0), min(a.y1, b.y1)
+    if ym1 > ym0:
+        if a.x0 < b.x0:
+            r = fitz.Rect(a.x0, ym0, b.x0, ym1)
+            if not r.is_empty:
+                out.append(r)
+        if b.x1 < a.x1:
+            r = fitz.Rect(b.x1, ym0, a.x1, ym1)
+            if not r.is_empty:
+                out.append(r)
+    return out
+
+
+def _rects_clip_minus_holes(clip: fitz.Rect, holes: List[fitz.Rect]) -> List[fitz.Rect]:
+    parts = [clip]
+    for h in holes:
+        hi = h & clip
+        if hi.is_empty or hi.get_area() <= 0:
+            continue
+        nxt: List[fitz.Rect] = []
+        for p in parts:
+            nxt.extend(_rect_minus_rect(p, hi))
+        parts = nxt
+    return [r for r in parts if not r.is_empty and r.get_area() > 0]
+
+
+def _image_placements_in_clip(page: fitz.Page, clip: fitz.Rect) -> List[fitz.Rect]:
+    """Прямоугольники вставленных изображений, пересекающие clip (чтобы redact их не затирал)."""
+    rects: List[fitz.Rect] = []
+    try:
+        for item in page.get_images(full=True) or []:
+            if not item:
+                continue
+            xref = int(item[0])
+            if hasattr(page, "get_image_rects"):
+                for r in page.get_image_rects(xref) or []:
+                    if r.intersects(clip):
+                        rects.append(r)
+    except Exception:
+        pass
+    return rects
+
+
 def _wipe_table(page: fitz.Page, clip: Optional[fitz.Rect] = None) -> fitz.Rect:
+    """
+    Очистка тела таблицы: белые redact по clip без перекрытия вставленных PNG (иначе проверки теряют №2/№4).
+    """
     if clip is None:
         clip = _table_clip_for_page(page)
-    page.add_redact_annot(clip, fill=(1, 1, 1))
-    try:
-        page.apply_redactions()
-    except Exception:
-        page.apply_redactions(images=0)
+    holes = _image_placements_in_clip(page, clip)
+    wipes = _rects_clip_minus_holes(clip, holes) if holes else [clip]
+    for w in wipes:
+        if w.is_empty:
+            continue
+        page.add_redact_annot(w, fill=(1, 1, 1))
+    _apply_redactions_full_table_wipe(page)
     return clip
 
 
@@ -794,16 +937,47 @@ def _clamp_rect_to_page(page: fitz.Page, r: fitz.Rect, inset: float = 0.5) -> fi
     return r & b
 
 
+def _apply_redactions_safe(page: fitz.Page) -> None:
+    """Redact текста/линий в зонах без удаления встроенных изображений (PNG в макете выписки)."""
+    try:
+        page.apply_redactions(
+            images=fitz.PDF_REDACT_IMAGE_NONE,
+            graphics=fitz.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED,
+            text=fitz.PDF_REDACT_TEXT_REMOVE,
+        )
+    except Exception:
+        try:
+            page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+        except Exception:
+            page.apply_redactions()
+
+
+def _apply_redactions_full_table_wipe(page: fitz.Page) -> None:
+    """
+    Полная белая заливка тела таблицы: как раньше — без «дырок» от span-redact.
+    Изображения в PDF не удаляем (для проверок), линии векторной сетки не трогаем отдельно —
+    поверх рисуем новые горизонтали в _draw_statement_row_separators.
+    """
+    try:
+        page.apply_redactions(
+            images=fitz.PDF_REDACT_IMAGE_NONE,
+            graphics=fitz.PDF_REDACT_LINE_ART_NONE,
+            text=fitz.PDF_REDACT_TEXT_REMOVE,
+        )
+    except Exception:
+        try:
+            page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+        except Exception:
+            page.apply_redactions()
+
+
 def _apply_whiteouts(page: fitz.Page, rects: List[fitz.Rect]) -> None:
     for r in rects:
         rc = _clamp_rect_to_page(page, r)
         if rc.is_empty or rc.get_area() <= 0:
             continue
         page.add_redact_annot(rc, fill=(1, 1, 1))
-    try:
-        page.apply_redactions()
-    except Exception:
-        page.apply_redactions(images=0)
+    _apply_redactions_safe(page)
 
 
 def _format_statement_account_display(raw: str, stmt: Dict[str, Any]) -> str:
@@ -830,7 +1004,7 @@ def _draw_text_jobs(
     """
     if not jobs:
         return
-    reg, bd = _register_template_fonts(page)
+    reg, bd = _register_statement_fonts(page)
     for rect, txt, fs, flags, rgb, align, span in jobs:
         fn = _pick_draw_font(flags, reg, bd, span)
         page.insert_textbox(rect, txt, fontname=fn, fontsize=fs, color=rgb, align=align)
@@ -884,16 +1058,13 @@ def _paint_statement_footer_like_template(page: fitz.Page, page_no: int) -> bool
         return False
     union, bik_sp, ao_r, bik_r, pg_r = lay
     page.add_redact_annot(union, fill=(1, 1, 1))
-    try:
-        page.apply_redactions()
-    except Exception:
-        page.apply_redactions(images=0)
+    _apply_redactions_safe(page)
     fs_ft = float(bik_sp.get("size") or 8.0)
     fs_ft = max(5.5, min(9.5, fs_ft))
     rgb_ft = _color_int_to_rgb(bik_sp.get("color"))
     if rgb_ft == (0.0, 0.0, 0.0):
         rgb_ft = (0.25, 0.25, 0.25)
-    reg2, bd2 = _register_template_fonts(page)
+    reg2, bd2 = _register_statement_fonts(page)
     fn2 = _pick_draw_font(int(bik_sp.get("flags", 0)), reg2, bd2, bik_sp)
     med = page.rect
     l1 = fitz.Rect(med.x0 + 32.0, ao_r.y0 - 2.5, med.x1 - 32.0, ao_r.y1 + 5.0)
@@ -964,22 +1135,19 @@ def _summary_row_spans_for_label(
 
 
 def _font_for_ruble_glyph(page: fitz.Page, rub_span: Dict[str, Any], reg: str, bd: str) -> str:
-    """В образце ₽ — Symbola; иначе тот же шрифт, что для суммы (TinkoffSans)."""
-    low = ((rub_span or {}).get("font") or "").lower()
-    if "symbola" not in low:
-        return _pick_draw_font(int(rub_span.get("flags") or 0), reg, bd, rub_span)
-    doc = page.parent
-    if getattr(doc, _STMT_SYMBOLA_REG, False):
-        return "my_symbola"
+    """Знак ₽ — Symbola с именем ресурса F3 (как в проверяемом эталоне Jasper/OpenPDF)."""
     sp = _symbola_font_path()
     if not sp:
-        return reg
+        return _pick_draw_font(int((rub_span or {}).get("flags") or 0), reg, bd, rub_span)
     try:
-        page.insert_font(fontname="my_symbola", fontfile=sp)
-        setattr(doc, _STMT_SYMBOLA_REG, True)
-        return "my_symbola"
+        page.insert_font(fontname=_STMT_SYMBOLA_RES, fontfile=sp)
+        return _STMT_SYMBOLA_RES
     except Exception:
-        return reg
+        try:
+            page.insert_font(fontname="Symbola", fontfile=sp)
+            return "Symbola"
+        except Exception:
+            return _pick_draw_font(int((rub_span or {}).get("flags") or 0), reg, bd, rub_span)
 
 
 def _draw_summary_total_line(
@@ -1386,7 +1554,7 @@ def _fill_static_page0(page: fitz.Page, cfg: Dict[str, Any], period_line: str, d
         baseline.append((ox_d, oy_d, doc_date, fs_doc, flags_d, rgb_doc, st_d))
 
     _apply_whiteouts(page, white)
-    reg, bd = _register_template_fonts(page)
+    reg, bd = _register_statement_fonts(page)
     for spans, new_full in segmented:
         _draw_multispan_line_like_template(page, spans, new_full, reg, bd)
     _draw_baseline_texts(page, baseline)
@@ -1410,9 +1578,166 @@ def _fill_summary_page(page: fitz.Page, tot_cred: float, tot_deb: float) -> None
         return
     white = [_expand(ub, (4, 2, 18, 8)) for _, ub, __, ___ in planned]
     _apply_whiteouts(page, white)
-    reg, bd = _register_template_fonts(page)
+    reg, bd = _register_statement_fonts(page)
     for spans, _ub, label_base, tot in planned:
         _draw_summary_total_line(page, spans, label_base, tot, rub, reg, bd)
+
+
+def _statement_pdf_metadata(cfg: Dict[str, Any]) -> Dict[str, str]:
+    """
+    Метаданные как у JasperReports/OpenPDF (строгие проверки).
+    Переопределение: config.statement_pdf_metadata.
+    """
+    sm = (cfg or {}).get("statement_pdf_metadata") or (cfg or {}).get("statement_pdf") or {}
+    _def_title = "movement_funds"
+    _def_subject = "/reports/IB/movement_funds"
+    _def_creator = (
+        "JasperReports Library version 6.20.3-415f9428cffdb6805c6f85bbb29ebaf18813a2ab"
+    )
+    _def_producer = "OpenPDF 1.3.30.jaspersoft.2"
+    return {
+        "producer": (sm.get("producer") or _def_producer).strip() or _def_producer,
+        "creator": (sm.get("creator") or _def_creator).strip() or _def_creator,
+        "subject": (sm.get("subject") or _def_subject).strip() or _def_subject,
+        "title": (sm.get("title") or _def_title).strip() or _def_title,
+    }
+
+
+def _subprocess_kw_no_window() -> Dict[str, Any]:
+    if sys.platform == "win32":
+        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+    return {}
+
+
+def _find_gs_executable() -> Optional[str]:
+    cand: List[str] = []
+    if sys.platform == "win32":
+        cand.extend(["gswin64c", "gswin32c"])
+    cand.extend(["gs", "/usr/bin/gs"])
+    kw = _subprocess_kw_no_window()
+    for c in cand:
+        try:
+            subprocess.run(
+                [c, "--version"],
+                check=True,
+                timeout=25,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                **kw,
+            )
+            return c
+        except Exception:
+            continue
+    pf = os.environ.get("ProgramFiles") or r"C:\Program Files"
+    for ver in ("10.03.1", "10.03.0", "10.02.1", "10.02.0", "10.01.2", "10.00.0"):
+        p = os.path.join(pf, "gs", f"gs{ver}", "bin", "gswin64c.exe")
+        if os.path.isfile(p):
+            return p
+    pf86 = os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)"
+    for root in (pf, pf86):
+        gsroot = os.path.join(root, "gs")
+        if not os.path.isdir(gsroot):
+            continue
+        try:
+            names = sorted(os.listdir(gsroot), reverse=True)
+        except OSError:
+            continue
+        for name in names:
+            p = os.path.join(gsroot, name, "bin", "gswin64c.exe")
+            if os.path.isfile(p):
+                return p
+            p2 = os.path.join(gsroot, name, "bin", "gswin32c.exe")
+            if os.path.isfile(p2):
+                return p2
+    return None
+
+
+def _statement_normalize_pdf_gs15(path: str) -> bool:
+    """Перезапись через Ghostscript с -dCompatibilityLevel=1.5 (если gs в PATH)."""
+    gs = _find_gs_executable()
+    if not gs:
+        return False
+    tmp = path + ".tbankmitm.gs15.tmp.pdf"
+    kw = _subprocess_kw_no_window()
+    try:
+        if os.path.isfile(tmp):
+            os.remove(tmp)
+        cmd = [
+            gs,
+            "-sDEVICE=pdfwrite",
+            "-dCompatibilityLevel=1.5",
+            "-dPDFSETTINGS=/default",
+            "-dPreserveAnnots=true",
+            "-dNOPAUSE",
+            "-dBATCH",
+            "-dQUIET",
+            "-dAutoRotatePages=/None",
+            f"-sOutputFile={tmp}",
+            path,
+        ]
+        subprocess.run(
+            cmd,
+            check=True,
+            timeout=240,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            **kw,
+        )
+        os.replace(tmp, path)
+        return True
+    except Exception:
+        try:
+            if os.path.isfile(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        return False
+
+
+def _statement_resave_metadata(path: str, meta: Dict[str, str]) -> None:
+    """Повторная запись метаданных после Ghostscript (gs часть полей сбрасывает)."""
+    tmp = path + ".tbankmitm.meta.tmp.pdf"
+    try:
+        if os.path.isfile(tmp):
+            os.remove(tmp)
+        d = fitz.open(path)
+        try:
+            d.set_metadata(meta)
+            d.save(tmp, garbage=3, deflate=True, incremental=False)
+        finally:
+            d.close()
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            if os.path.isfile(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+
+
+def _statement_force_pdf_header_version(path: str, version: str = "1.5") -> bool:
+    """
+    Подмена первой строки %PDF-1.x → %PDF-1.5 без Ghostscript (gs перекодирует PNG и ломает проверки).
+    Длина заголовка должна остаться 8 байт (%PDF-1.7 и %PDF-1.5 — одинаковой длины).
+    """
+    hdr = ("%PDF-" + version.strip()).encode("ascii", "ignore")
+    if len(hdr) != 8:
+        return False
+    try:
+        with open(path, "r+b") as f:
+            head = f.read(16)
+            if len(head) < 8 or not head.startswith(b"%PDF-"):
+                return False
+            cur = head[:8]
+            if cur == hdr:
+                return True
+            if not re.match(br"%PDF-1\.\d$", cur):
+                return False
+            f.seek(0)
+            f.write(hdr)
+        return True
+    except Exception:
+        return False
 
 
 def generate_statement_pdf_from_template(
@@ -1469,7 +1794,7 @@ def generate_statement_pdf_from_template(
                     first_date = ""
                     y = _first_body_row_y0(pg, clip, first_date, 0, lay)
                     _wipe_table(pg, clip)
-                    font_reg, font_bd = _register_template_fonts(pg)
+                    font_reg, font_bd = _register_statement_fonts(pg)
                     _draw_statement_row_separators(pg, clip, [float(clip.y0) + 0.34])
                     pg.insert_text(
                         (lay.x_date, y + 2),
@@ -1487,7 +1812,7 @@ def generate_statement_pdf_from_template(
                 first_date, _ = _split_from_display(m0.get("date_display") or "")
             y = _first_body_row_y0(pg, clip, first_date, pi, lay)
             _wipe_table(pg, clip)
-            font_reg, font_bd = _register_template_fonts(pg)
+            font_reg, font_bd = _register_statement_fonts(pg)
             row_bottom = float(lay.fs) + float(lay.time_dy) + 2.0
             ri = 0
             drew_any = False
@@ -1564,11 +1889,8 @@ def generate_statement_pdf_from_template(
                 rgb_ft = (0.25, 0.25, 0.25)
             line_txt = f"БИК 044525974 ИНН 7710140679 КПП 771301001 {i + 1}"
             pg.add_redact_annot(line_rect, fill=(1, 1, 1))
-            try:
-                pg.apply_redactions()
-            except Exception:
-                pg.apply_redactions(images=0)
-            reg2, bd2 = _register_template_fonts(pg)
+            _apply_redactions_safe(pg)
+            reg2, bd2 = _register_statement_fonts(pg)
             fn2 = _pick_draw_font(int(sp_ft.get("flags", 0)) if sp_ft else 0, reg2, bd2, sp_ft)
             pg.insert_textbox(
                 line_rect,
@@ -1579,8 +1901,16 @@ def generate_statement_pdf_from_template(
                 align=fitz.TEXT_ALIGN_LEFT,
             )
 
-        out.save(output_path, garbage=4, deflate=True, incremental=False)
+        meta = _statement_pdf_metadata(cfg)
+        out.set_metadata(meta)
+        out.save(output_path, garbage=3, deflate=True, incremental=False)
         out.close()
+        # Ghostscript по умолчанию выключен: пересобирает потоки и «теряет» эталонные PNG/шрифты.
+        if os.environ.get("TBANKMITM_STMT_GS15", "").strip().lower() in ("1", "true", "yes", "on"):
+            _statement_normalize_pdf_gs15(output_path)
+        # Один повторный save: после gs поля сбрасываются; без gs — часть проверок не видит title с первого save.
+        _statement_resave_metadata(output_path, meta)
+        _statement_force_pdf_header_version(output_path, "1.5")
     finally:
         tpl.close()
 
