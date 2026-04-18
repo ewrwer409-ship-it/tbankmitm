@@ -28,7 +28,7 @@ _UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}"
 )
 _MANUAL_RE = re.compile(r"\bm_[a-zA-Z0-9_]+\b")
-_UNIFIED_OP_RE = re.compile(r"\bUNIFIED_\d+\b")
+_UNIFIED_OP_RE = re.compile(r"(?i)\bunified_\d+\b")
 
 def _format_phone_ru(phone: str) -> str:
     digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
@@ -537,6 +537,23 @@ def _inject_payload_card_documents_and_flags(
             bl.insert(0, synth)
             changed = True
 
+    # Тот же экран часто кладёт операцию во вложенный payload.operation — без этого не рисуется Black/справка.
+    nested = payload.get("operation")
+    if isinstance(nested, dict):
+        nested_root = {"payload": nested}
+        if _inject_payload_card_documents_and_flags(
+            nested_root,
+            typ,
+            balance_value,
+            account_mask,
+            account_name,
+            transfer_block_title,
+            card_ucid,
+            card_id,
+            account_id,
+        ):
+            changed = True
+
     return changed
 
 
@@ -617,10 +634,15 @@ def _patch_manual_detail_semantics(obj, man: dict) -> bool:
             replacement = account_mask or account_name
         if replacement is None:
             return
+        wrote = False
         for value_key in value_keys:
             if value_key in node:
                 node[value_key] = replacement
+                wrote = True
                 changed = True
+        if not wrote:
+            node["fieldValue"] = replacement
+            changed = True
         if replacement_label is not None and label_key in node:
             node[label_key] = replacement_label
             changed = True
@@ -745,6 +767,43 @@ def _patch_manual_detail_semantics(obj, man: dict) -> bool:
                 visit(item)
 
     visit(obj)
+
+    def _fill_missing_field_values(node):
+        nonlocal changed
+        if isinstance(node, dict):
+            fk = str(node.get("fieldName") or "").strip().lower()
+            if fk:
+                has_val = any(
+                    bool(str(node.get(k) or "").strip())
+                    for k in ("fieldValue", "value", "primaryText", "text", "subtitle")
+                )
+                if not has_val:
+                    rep = None
+                    if "отправител" in fk:
+                        rep = (formatted_phone or phone) if typ == "Debit" else sender_name
+                    elif "получател" in fk or "фио" in fk:
+                        rep = primary
+                    elif "телефон" in fk or fk == "phone":
+                        rep = formatted_phone or phone
+                    elif "назначен" in fk:
+                        rep = beneficiary
+                    elif "счет" in fk or "счёт" in fk:
+                        rep = external_account or account_mask
+                    elif "карт" in fk:
+                        rep = account_mask
+                    elif "тип" in fk and "перевод" in fk:
+                        rep = "Система быстрых платежей"
+                    if rep:
+                        node["fieldValue"] = rep
+                        changed = True
+            for v in node.values():
+                _fill_missing_field_values(v)
+        elif isinstance(node, list):
+            for x in node:
+                _fill_missing_field_values(x)
+
+    _fill_missing_field_values(obj)
+
     if _inject_payload_card_documents_and_flags(
         obj,
         typ,
@@ -879,6 +938,19 @@ def response(flow: http.HTTPFlow) -> None:
     except Exception:
         return
 
+    sec_changed = False
+    try:
+        if history.neutralize_is_suspicious_tree(data):
+            sec_changed = True
+        if history.neutralize_security_banner_strings(data):
+            sec_changed = True
+        if history.neutralize_aml_ui_flags(data):
+            sec_changed = True
+        if history.neutralize_compound_security_strings(data):
+            sec_changed = True
+    except Exception:
+        pass
+
     # Ключевой момент: мы подменяем id/time в запросе на reference-операцию,
     # поэтому в ответе detail-экрана backend часто возвращает id/references
     # уже от reference. Тогда `_patch_tree` не находит узлы с нужным id.
@@ -936,7 +1008,18 @@ def response(flow: http.HTTPFlow) -> None:
     changed = _patch_tree(data, manual_ids, fake_manual_by_id)
     if target_manual:
         changed = _patch_manual_detail_semantics(data, target_manual) or changed
-    if changed:
+    try:
+        if history.neutralize_is_suspicious_tree(data):
+            sec_changed = True
+        if history.neutralize_security_banner_strings(data):
+            sec_changed = True
+        if history.neutralize_aml_ui_flags(data):
+            sec_changed = True
+        if history.neutralize_compound_security_strings(data):
+            sec_changed = True
+    except Exception:
+        pass
+    if changed or sec_changed:
         flow.response.text = json.dumps(data, ensure_ascii=False)
         if bank_debug_enabled():
             print(f"[operation_detail] подмена ответа: {url[:160]}")

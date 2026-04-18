@@ -15,6 +15,11 @@ from pathlib import Path
 import subprocess
 import urllib.parse
 import time
+import ssl
+import smtplib
+import threading
+from email.message import EmailMessage
+from email.utils import formataddr
 from urllib.parse import unquote
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -709,7 +714,8 @@ def _add_to_fake_history() -> bool:
         "category": {"id": "45", "name": "Другое"},
         "brand": {"id": "11250", "name": display_name, "logo": logo_url, "baseColor": "f12e16", "fileLink": logo_url},
         "spendingCategory": {"id": "24", "name": "Переводы", "icon": "transfers-c1", "baseColor": "4FC5DF"},
-        "senderDetails": "",
+        "sender_name": str(transfer_data.get("sender_name") or "").strip(),
+        "senderDetails": str(transfer_data.get("sender_name") or "").strip(),
         "subcategory": display_name,
         "loyaltyBonus": [],
         "loyaltyPayment": [],
@@ -728,7 +734,17 @@ def _add_to_fake_history() -> bool:
         "virtualPaymentType": 0,
         "hasStatement": True,
         "hasShoppingReceipt": False,
-        "additionalInfo": [{"fieldName": "Тип перевода", "fieldValue": "Система быстрых платежей"}],
+        "additionalInfo": [
+            {"fieldName": "Тип перевода", "fieldValue": "Система быстрых платежей"},
+            {
+                "fieldName": "Отправитель",
+                "fieldValue": str(transfer_data.get("sender_name") or "").strip() or "Клиент",
+            },
+            {
+                "fieldName": "Номер телефона",
+                "fieldValue": str(transfer_data.get("receiver_phone") or "").strip(),
+            },
+        ],
         "isDispute": False,
         "operationTransferred": False,
         "isOffline": False,
@@ -743,7 +759,10 @@ def _add_to_fake_history() -> bool:
         "isInner": False,
         "isAuto": False,
         "merges": [],
-        "documents": ["Statement"],
+        "documents": [
+            {"type": "Receipt", "title": "Квитанция", "available": True},
+            {"type": "Certificate", "title": "Справка по операции", "available": True},
+        ],
         "pdf_path": pdf_path,
         "date_full": transfer_data.get("date_full") or "",
         "receiver_phone": str(transfer_data.get("receiver_phone") or "").strip(),
@@ -996,52 +1015,44 @@ def _parse_receipt_operation_id_from_flow(flow: http.HTTPFlow):
     return operation_id
 
 
-def _try_serve_receipt_pdf_response(flow: http.HTTPFlow, url_raw: str) -> bool:
+def _get_receipt_pdf_for_operation(operation_id):
     """
-    Подмена ответа для URL с payment_receipt_pdf / operation_statement_pdf.
-    Вызывается до проверок JSON/тела — как у кнопки «Квитанция» в мок‑переводе.
-    Ручные операции и мок из истории: history.ensure_operation_receipt_pdf_path.
+    Тот же PDF, что отдаётся по payment_receipt_pdf: fake_history / history / сгенерированный чек.
     """
-    ul = url_raw.lower()
-    if "payment_receipt_pdf" not in ul and "operation_statement_pdf" not in ul:
-        return False
-    if not is_bank_flow(flow):
-        return False
-
-    operation_id = _parse_receipt_operation_id_from_flow(flow)
-    if not operation_id and fake_history:
-        operation_id = fake_history[0].get("id")
+    oid = operation_id
+    if not oid and fake_history:
+        oid = fake_history[0].get("id") if fake_history else None
 
     pdf_path = None
-    if operation_id:
+    if oid:
         try:
-            pdf_path = history_mod.ensure_operation_receipt_pdf_path(str(operation_id))
+            pdf_path = history_mod.ensure_operation_receipt_pdf_path(str(oid))
         except Exception:
             pdf_path = None
     if pdf_path and Path(pdf_path).exists():
-        pass
-    else:
-        pdf_path = None
-        if operation_id and fake_history:
-            for op in fake_history:
-                if not isinstance(op, dict):
-                    continue
-                if op.get("id") == operation_id or op.get("transaction_id") == operation_id:
-                    pdf_path = op.get("pdf_path")
-                    break
-        if not pdf_path and fake_history:
-            pdf_path = fake_history[0].get("pdf_path") if isinstance(fake_history[0], dict) else None
-        if not pdf_path:
-            pdf_path = transfer_data.get("last_pdf_path")
+        return pdf_path
+
+    pdf_path = None
+    if oid and fake_history:
+        for op in fake_history:
+            if not isinstance(op, dict):
+                continue
+            if op.get("id") == oid or op.get("transaction_id") == oid:
+                pdf_path = op.get("pdf_path")
+                break
+    if not pdf_path and fake_history:
+        pdf_path = fake_history[0].get("pdf_path") if isinstance(fake_history[0], dict) else None
+    if not pdf_path:
+        pdf_path = transfer_data.get("last_pdf_path")
 
     if not pdf_path or not Path(pdf_path).exists():
-        fb = operation_id or ("FALLBACK_" + str(int(time.time() * 1000)))
+        fb = oid or ("FALLBACK_" + str(int(time.time() * 1000)))
         pdf_path = None
-        if operation_id and fake_history:
+        if oid and fake_history:
             for hop in fake_history:
                 if not isinstance(hop, dict):
                     continue
-                if str(hop.get("id")) != str(operation_id):
+                if str(hop.get("id")) != str(oid):
                     continue
                 amt = hop.get("amount")
                 if isinstance(amt, dict):
@@ -1075,6 +1086,89 @@ def _try_serve_receipt_pdf_response(flow: http.HTTPFlow, url_raw: str) -> bool:
             pdf_path = create_real_receipt(fb)
 
     if pdf_path and Path(pdf_path).exists():
+        return pdf_path
+    return None
+
+
+def _send_receipt_email_worker(
+    to_mail: str,
+    operation_id: str,
+    pdf_path: str,
+) -> None:
+    """Фоновая отправка PDF на SMTP; From — display name из config.receipt_mail."""
+    try:
+        cfg_root = load_config()
+        rm = (cfg_root or {}).get("receipt_mail") or {}
+        if not rm.get("enabled"):
+            return
+        host = (rm.get("smtp_host") or "").strip()
+        port = int(rm.get("smtp_port") or 465)
+        user = (rm.get("smtp_user") or "").strip()
+        password = rm.get("smtp_password") or ""
+        use_ssl = rm.get("smtp_use_ssl", True)
+        name_cfg = (cfg_root or {}).get("name") or {}
+        from_email = (rm.get("from_email") or "").strip() or user or (name_cfg.get("email") or "").strip()
+        if not host or not from_email:
+            print("[transfer] receipt_mail: задайте smtp_host и from_email (или smtp_user)")
+            return
+        display = (rm.get("from_display_name") or "Т‑Банк").strip()
+        subject = (rm.get("subject") or "Квитанция по операции").strip()
+        body_text = (rm.get("body") or "Документ во вложении.").strip()
+
+        with open(pdf_path, "rb") as f:
+            pdf_bytes = f.read()
+
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = formataddr((display, from_email))
+        msg["To"] = to_mail
+        msg.set_content(body_text, charset="utf-8")
+        fname = f"Квитанция_{operation_id or 'receipt'}.pdf"
+        msg.add_attachment(
+            pdf_bytes,
+            maintype="application",
+            subtype="pdf",
+            filename=fname,
+        )
+
+        ctx = ssl.create_default_context()
+        if use_ssl and port == 465:
+            with smtplib.SMTP_SSL(host, port, context=ctx, timeout=60) as smtp:
+                if user and password:
+                    smtp.login(user, password)
+                smtp.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=60) as smtp:
+                smtp.ehlo()
+                smtp.starttls(context=ctx)
+                smtp.ehlo()
+                if user and password:
+                    smtp.login(user, password)
+                smtp.send_message(msg)
+        print(f"[transfer] receipt_mail: отправлено → {to_mail} (PDF {len(pdf_bytes)} байт, From: {display!r})")
+    except Exception as ex:
+        print(f"[transfer] receipt_mail: ошибка SMTP: {ex}")
+
+
+def _try_serve_receipt_pdf_response(flow: http.HTTPFlow, url_raw: str) -> bool:
+    """
+    Подмена ответа для URL с payment_receipt_pdf / operation_statement_pdf.
+    Вызывается до проверок JSON/тела — как у кнопки «Квитанция» в мок‑переводе.
+    Ручные операции и мок из истории: history.ensure_operation_receipt_pdf_path.
+    """
+    ul = url_raw.lower()
+    if "payment_receipt_pdf" not in ul and "operation_statement_pdf" not in ul:
+        return False
+    if not is_bank_flow(flow):
+        return False
+
+    operation_id = _parse_receipt_operation_id_from_flow(flow)
+    if not operation_id and fake_history:
+        operation_id = fake_history[0].get("id")
+
+    pdf_path = _get_receipt_pdf_for_operation(operation_id)
+
+    if pdf_path and Path(pdf_path).exists():
         with open(pdf_path, "rb") as f:
             flow.response.content = f.read()
         flow.response.headers["Content-Type"] = "application/pdf"
@@ -1085,6 +1179,64 @@ def _try_serve_receipt_pdf_response(flow: http.HTTPFlow, url_raw: str) -> bool:
     return False
 
 
+def _parse_query_first(url_raw: str, *keys: str) -> str:
+    try:
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(url_raw).query)
+        for k in keys:
+            vals = q.get(k) or []
+            if vals and str(vals[0]).strip():
+                return str(vals[0]).strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _maybe_stub_send_receipt_mock(flow: http.HTTPFlow, url_raw: str) -> bool:
+    """
+    Запрос «отправить квитанцию на почту»: для реального UNIFIED_* банк не создавал операцию —
+    сервер может отвечать OK без доставки или ошибкой в payload. Для моков отдаём явный OK.
+    Если в config.json включён receipt_mail, во вложении уходит тот же PDF, что для квитанции в приложении,
+    с полем From из from_display_name (не почта банка).
+    """
+    ul = url_raw.lower()
+    if "send_receipt" not in ul:
+        return False
+    if flow.request.method.upper() != "GET":
+        return False
+    pid = _parse_query_first(
+        url_raw, "paymentId", "paymentid", "payment_id", "operationId", "operation_id"
+    )
+    pid = history_mod.canonical_fake_transfer_op_id(pid)
+    if not pid or not history_mod.op_id_in_fake_history_files(pid):
+        return False
+    to_mail = _parse_query_first(url_raw, "to", "email", "mail")
+    flow.response.status_code = 200
+    flow.response.headers["Content-Type"] = "application/json; charset=utf-8"
+    flow.response.text = json.dumps(
+        {
+            "resultCode": "OK",
+            "trackingId": "MOCK_RECEIPT_MAIL",
+            "payload": {"status": "ACCEPTED", "sent": True, "destination": to_mail},
+        },
+        ensure_ascii=False,
+    )
+    rm = (load_config() or {}).get("receipt_mail") or {}
+    if to_mail and rm.get("enabled"):
+        pdf_path = _get_receipt_pdf_for_operation(pid)
+        if pdf_path and Path(pdf_path).exists():
+            threading.Thread(
+                target=_send_receipt_email_worker,
+                args=(to_mail, pid, pdf_path),
+                daemon=True,
+            ).start()
+            print(f"[transfer] send_receipt → OK + receipt_mail в фоне на {to_mail}")
+        else:
+            print("[transfer] send_receipt → OK, но PDF не найден — письмо не отправлено")
+    else:
+        print("[transfer] send_receipt → заглушка OK (включите receipt_mail.enabled для SMTP)")
+    return True
+
+
 def response(flow: http.HTTPFlow) -> None:
     if not flow.response:
         return
@@ -1092,6 +1244,8 @@ def response(flow: http.HTTPFlow) -> None:
     if not is_bank_flow(flow):
         return
     ensure_response_decoded(flow)
+    if _maybe_stub_send_receipt_mock(flow, url_raw):
+        return
     # 422 на вспомогательных API рвёт сценарии (перевод, кэш) — отдаём пустой OK.
     ul = url_raw.lower()
     if flow.response.status_code == 422:
