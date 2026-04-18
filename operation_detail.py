@@ -48,7 +48,16 @@ def _extract_ids_from_url(url: str) -> list:
     out.extend(m.group(0) for m in _UNIFIED_OP_RE.finditer(url or ""))
     try:
         q = parse_qs(urlparse(url).query)
-        for key in ("operationId", "operation_id", "id", "operationID", "parentOperationId", "rootOperationId"):
+        for key in (
+            "operationId",
+            "operation_id",
+            "id",
+            "operationID",
+            "parentOperationId",
+            "rootOperationId",
+            "extOperationId",
+            "extoperationid",
+        ):
             for val in q.get(key, []):
                 if val and (val.startswith("m_") or len(val) > 10):
                     out.append(val.strip())
@@ -59,14 +68,17 @@ def _extract_ids_from_url(url: str) -> list:
 
 def _collect_ids_from_json(obj, out: set) -> None:
     if isinstance(obj, dict):
-        for k in ("id", "operationId", "parentOperationId", "rootOperationId"):
+        for k in ("id", "operationId", "parentOperationId", "rootOperationId", "extOperationId"):
             v = obj.get(k)
-            if isinstance(v, str) and (
-                v.startswith("m_")
-                or _UUID_RE.fullmatch(v)
-                or (v.startswith("UNIFIED_") and len(v) >= 12)
-            ):
-                out.add(v)
+            if not isinstance(v, str):
+                continue
+            vs = v.strip()
+            if not vs:
+                continue
+            if vs.startswith("m_") or _UUID_RE.fullmatch(vs):
+                out.add(vs)
+            elif re.match(r"(?i)^unified_\d+", vs) and len(vs) >= 12:
+                out.add(history.canonical_fake_transfer_op_id(vs))
         for v in obj.values():
             _collect_ids_from_json(v, out)
     elif isinstance(obj, list):
@@ -137,6 +149,12 @@ def _url_suggests_detail_or_receipt(u: str) -> bool:
         return False
     if any(b in u for b in ("histogram", "category_list", "graphql", "web-gateway", "log/collect")):
         return False
+    try:
+        path = (urlparse(u).path or "").lower()
+        if re.search(r"/operations/[^/?#\s]+$", path):
+            return True
+    except Exception:
+        pass
     hints = (
         "receipt",
         "fiscal",
@@ -165,6 +183,13 @@ def _url_suggests_detail_or_receipt(u: str) -> bool:
         "&statement",
         "movement",
         "registry",
+        "card_credentials",
+        "get_requisites",
+        "requisites",
+        "requisite",
+        "pumba",
+        "bankdetails",
+        "credentials",
     )
     return any(h in u for h in hints)
 
@@ -466,8 +491,59 @@ def _synthetic_transfer_source_block(
     }
 
 
-def _inject_payload_card_documents_and_flags(
-    root: dict,
+def _iter_detail_payload_dicts(root: dict) -> list:
+    """Все dict-контейнеры экрана деталей (iOS часто кладёт данные в result.data.payload)."""
+    out = []
+    seen = set()
+
+    def add(d):
+        if isinstance(d, dict) and id(d) not in seen:
+            seen.add(id(d))
+            out.append(d)
+
+    if not isinstance(root, dict):
+        return out
+    pl = root.get("payload")
+    if isinstance(pl, dict):
+        add(pl)
+    res = root.get("result")
+    if isinstance(res, dict):
+        pl = res.get("payload")
+        if isinstance(pl, dict):
+            add(pl)
+        data = res.get("data")
+        if isinstance(data, dict):
+            pl = data.get("payload")
+            if isinstance(pl, dict):
+                add(pl)
+    data = root.get("data")
+    if isinstance(data, dict):
+        pl = data.get("payload")
+        if isinstance(pl, dict):
+            add(pl)
+    view = root.get("view")
+    if isinstance(view, dict):
+        pl = view.get("payload")
+        if isinstance(pl, dict):
+            add(pl)
+    if not out and any(
+        k in root
+        for k in (
+            "blocks",
+            "sections",
+            "widgets",
+            "operation",
+            "documents",
+            "hasStatement",
+            "hasReceipt",
+        )
+    ):
+        add(root)
+    return out
+
+
+def _inject_transfer_into_payload_dict(
+    payload: dict,
     typ: str,
     balance_value: float,
     account_mask: str,
@@ -477,19 +553,10 @@ def _inject_payload_card_documents_and_flags(
     card_id: str,
     account_id: str,
 ) -> bool:
-    """Добавляет флаги справки/квитанции и блок карты в payload, если их нет."""
+    """Один объект payload: документы + блок Перевод/Пополнение + рекурсия в payload.operation."""
     changed = False
-    if not isinstance(root, dict):
-        return False
-    payload = root.get("payload")
-    if not isinstance(payload, dict) and isinstance(root.get("result"), dict):
-        payload = root["result"].get("payload")
     if not isinstance(payload, dict):
-        # иногда корень = payload
-        if any(k in root for k in ("blocks", "sections", "operation")):
-            payload = root
-        else:
-            return False
+        return False
     if payload.get("hasStatement") is not True:
         payload["hasStatement"] = True
         changed = True
@@ -514,7 +581,18 @@ def _inject_payload_card_documents_and_flags(
         account_id,
     )
     inserted = False
-    for key in ("blocks", "sections", "groups", "widgets", "details"):
+    for key in (
+        "blocks",
+        "sections",
+        "groups",
+        "widgets",
+        "details",
+        "panels",
+        "screens",
+        "cards",
+        "content",
+        "items",
+    ):
         lst = payload.get(key)
         if not isinstance(lst, list):
             continue
@@ -537,7 +615,6 @@ def _inject_payload_card_documents_and_flags(
             bl.insert(0, synth)
             changed = True
 
-    # Тот же экран часто кладёт операцию во вложенный payload.operation — без этого не рисуется Black/справка.
     nested = payload.get("operation")
     if isinstance(nested, dict):
         nested_root = {"payload": nested}
@@ -554,6 +631,37 @@ def _inject_payload_card_documents_and_flags(
         ):
             changed = True
 
+    return changed
+
+
+def _inject_payload_card_documents_and_flags(
+    root: dict,
+    typ: str,
+    balance_value: float,
+    account_mask: str,
+    account_name: str,
+    transfer_block_title: str,
+    card_ucid: str,
+    card_id: str,
+    account_id: str,
+) -> bool:
+    """Добавляет флаги справки/квитанции и блок карты во все найденные payload экрана операции."""
+    if not isinstance(root, dict):
+        return False
+    changed = False
+    for payload in _iter_detail_payload_dicts(root):
+        if _inject_transfer_into_payload_dict(
+            payload,
+            typ,
+            balance_value,
+            account_mask,
+            account_name,
+            transfer_block_title,
+            card_ucid,
+            card_id,
+            account_id,
+        ):
+            changed = True
     return changed
 
 
@@ -614,9 +722,10 @@ def _patch_manual_detail_semantics(obj, man: dict) -> bool:
             return
         replacement = None
         replacement_label = None
+        phone_show = (formatted_phone or phone or "").strip()
         if "отправител" in label or "sender" in label:
-            if typ == "Debit" and formatted_phone:
-                replacement = formatted_phone
+            if typ == "Debit" and phone_show:
+                replacement = formatted_phone or phone
                 replacement_label = "Номер телефона"
             else:
                 replacement = sender_name
@@ -624,8 +733,15 @@ def _patch_manual_detail_semantics(obj, man: dict) -> bool:
         if "номер телефона" in label or label == "телефон" or "phone" in label:
             replacement = formatted_phone or phone
             replacement_label = "Номер телефона"
-        elif "получател" in label or "фио" in label or "recipient" in label:
+        elif (
+            "получател" in label
+            or "recipient" in label
+            or ("фио" in label and ("получ" in label or "владел" in label))
+        ):
             replacement = primary
+        elif typ == "Debit" and phone_show and label.strip() in ("фио", "fio"):
+            replacement = formatted_phone or phone
+            replacement_label = "Номер телефона"
         elif "назначение" in label or "beneficiary" in label:
             replacement = beneficiary
         elif "счет" in label or "счёт" in label or "account" in label:
@@ -768,6 +884,57 @@ def _patch_manual_detail_semantics(obj, man: dict) -> bool:
 
     visit(obj)
 
+    def _coerce_debit_sender_requisite_rows(root):
+        """Перезаписывает уже заполненное ФИО в строке «Отправитель» при исходящем СБП, если в manual есть телефон."""
+        nonlocal changed
+        if typ != "Debit":
+            return
+        pv = (formatted_phone or phone or "").strip()
+        if not pv:
+            return
+        disp = formatted_phone or phone
+
+        def walk(n):
+            nonlocal changed
+            if isinstance(n, dict):
+                fk = str(n.get("fieldName") or n.get("label") or "").strip().lower()
+                if "отправител" in fk or "sender" in fk:
+                    for vk in (
+                        "fieldValue",
+                        "value",
+                        "primaryText",
+                        "text",
+                        "description",
+                        "subtitle",
+                    ):
+                        if vk in n and str(n.get(vk) or "").strip() != str(disp).strip():
+                            n[vk] = disp
+                            changed = True
+                    if not any(
+                        bool(str(n.get(vk) or "").strip())
+                        for vk in ("fieldValue", "value", "primaryText", "text")
+                    ):
+                        n["fieldValue"] = disp
+                        changed = True
+                    if "fieldName" in n and "отправител" in str(n.get("fieldName") or "").lower():
+                        n["fieldName"] = "Номер телефона"
+                        changed = True
+                    if "label" in n and (
+                        "отправител" in str(n.get("label") or "").lower()
+                        or "sender" in str(n.get("label") or "").lower()
+                    ):
+                        n["label"] = "Номер телефона"
+                        changed = True
+                for v in n.values():
+                    walk(v)
+            elif isinstance(n, list):
+                for x in n:
+                    walk(x)
+
+        walk(root)
+
+    _coerce_debit_sender_requisite_rows(obj)
+
     def _fill_missing_field_values(node):
         nonlocal changed
         if isinstance(node, dict):
@@ -781,8 +948,10 @@ def _patch_manual_detail_semantics(obj, man: dict) -> bool:
                     rep = None
                     if "отправител" in fk:
                         rep = (formatted_phone or phone) if typ == "Debit" else sender_name
-                    elif "получател" in fk or "фио" in fk:
+                    elif "получател" in fk or ("фио" in fk and ("получ" in fk or "владел" in fk)):
                         rep = primary
+                    elif typ == "Debit" and (formatted_phone or phone) and fk.strip() in ("фио", "fio"):
+                        rep = formatted_phone or phone
                     elif "телефон" in fk or fk == "phone":
                         rep = formatted_phone or phone
                     elif "назначен" in fk:
@@ -861,7 +1030,13 @@ def response(flow: http.HTTPFlow) -> None:
         return
     if flow_statements_spravki_context(flow):
         return
-    ids_in_flow = _extract_ids_from_flow(flow)
+    ids_in_flow = set(_extract_ids_from_flow(flow))
+    try:
+        tstrip = (txt or "").strip()
+        if tstrip.startswith("{") or tstrip.startswith("["):
+            _collect_ids_from_json(json.loads(tstrip), ids_in_flow)
+    except Exception:
+        pass
     fake_manual_by_id = _build_fake_manual_map(ids_in_flow)
     # Детали/справка по id из metadata (после подмены запроса backend отдаёт reference id)
     try:

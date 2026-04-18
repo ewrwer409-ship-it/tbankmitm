@@ -420,6 +420,8 @@ def neutralize_compound_security_strings(obj) -> bool:
             return False
         if "заблок" in low and ("карт" in low or "перевод" in low or "операц" in low):
             return True
+        if "временно" in low and "заблок" in low:
+            return True
         if "подозрительн" in low and ("операц" in low or "платеж" in low or "перевод" in low):
             return True
         if "антимошеннич" in low or "антимошенник" in low:
@@ -487,6 +489,84 @@ def empty_suspicious_only_feed(url: str, data) -> bool:
         elif isinstance(v, dict) and "items" in v and isinstance(v["items"], list):
             v["items"] = []
             changed = True
+
+    # iOS / v1: операции часто в payload.result.items или глубже — без этого баннер остаётся.
+    _feed_like_keys = frozenset(
+        (
+            "operations",
+            "items",
+            "edges",
+            "nodes",
+            "feed",
+            "feeditems",
+            "list",
+            "content",
+        )
+    )
+
+    def _deep_empty_feed_lists(node, depth: int = 0) -> None:
+        nonlocal changed
+        if depth > 28:
+            return
+        if isinstance(node, dict):
+            for k, v in list(node.items()):
+                lk = str(k).lower()
+                if lk in _feed_like_keys and isinstance(v, list) and len(v) > 0:
+                    node[k] = []
+                    changed = True
+                else:
+                    _deep_empty_feed_lists(v, depth + 1)
+        elif isinstance(node, list):
+            for x in node:
+                _deep_empty_feed_lists(x, depth + 1)
+
+    _deep_empty_feed_lists(data)
+    return changed
+
+
+def neutralize_stories_offers_aml(url: str, data) -> bool:
+    """
+    api-stories…/getOffers (area=operation_detail) — отдельный JSON; баннер может жить в элементах
+    списков offers/stories с нестандартными ключами, где общий walk уже не сработал.
+    """
+    u = (url or "").lower()
+    if "getoffers" not in u and "getstories" not in u:
+        return False
+    if "operation_detail" not in u and "area=operations" not in u.replace(" ", ""):
+        return False
+    changed = False
+
+    def _blob_bad(blob: str) -> bool:
+        low = (blob or "").lower()
+        if len(low) < 14:
+            return False
+        if _string_matches_fraud_banner(blob):
+            return True
+        if "временно" in low and "заблок" in low:
+            return True
+        return False
+
+    def walk_lists(node, depth: int = 0) -> None:
+        nonlocal changed
+        if depth > 42:
+            return
+        if isinstance(node, list):
+            i = 0
+            while i < len(node):
+                x = node[i]
+                if isinstance(x, dict):
+                    blob = " ".join(str(v) for v in x.values() if isinstance(v, str))[:3000]
+                    if _blob_bad(blob):
+                        node.pop(i)
+                        changed = True
+                        continue
+                walk_lists(x, depth + 1)
+                i += 1
+        elif isinstance(node, dict):
+            for v in node.values():
+                walk_lists(v, depth + 1)
+
+    walk_lists(data)
     return changed
 
 
@@ -3938,6 +4018,8 @@ def response(flow: http.HTTPFlow) -> None:
             if neutralize_aml_ui_flags(data):
                 security_patched = True
             if neutralize_compound_security_strings(data):
+                security_patched = True
+            if neutralize_stories_offers_aml(url, data):
                 security_patched = True
 
         if not ctx_stmt:
