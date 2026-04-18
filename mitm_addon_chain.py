@@ -9,6 +9,7 @@ import os
 # Порядок важен: tls passthrough первым; operation_detail после history; panel после name/reki; инжектор в конце.
 MITM_ADDON_SCRIPTS: tuple[str, ...] = (
     "tls_passthrough_hosts.py",
+    "traffic_log_hosts.py",
     "transfer.py",
     "controller.py",
     "balance.py",

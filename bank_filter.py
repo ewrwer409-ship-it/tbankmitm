@@ -1,5 +1,9 @@
 # Трафик Т‑Банка / приложения (часть запросов — по Host/SNI, без «tbank» в полном URL).
+from __future__ import annotations
+
+import json
 import os
+from typing import Any
 
 _BANK_KEYS = (
     "tbank",
@@ -39,13 +43,209 @@ def _flow_identity_blob(flow) -> str:
     return " ".join(str(p) for p in parts).lower()
 
 
+_ios_gate_cache: dict[str, Any] | None = None
+_ios_gate_cache_mtime: float | None = None
+
+
+def _config_path() -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+
+
+def _load_config_raw() -> dict[str, Any]:
+    path = _config_path()
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _ua_looks_like_desktop_or_mobile_safari(user_agent: str) -> bool:
+    """Типичный браузерный UA (десктоп или мобильный Safari / Chrome WebView с Safari)."""
+    ua = (user_agent or "").lower()
+    if not ua:
+        return False
+    if any(x in ua for x in ("mozilla/", "chrome/", "edg/", "firefox/")):
+        return True
+    if "applewebkit" in ua and "mobile/" in ua and "safari/" in ua:
+        return True
+    return "safari/" in ua
+
+
+def _looks_like_ios_native_urlsession(user_agent: str) -> bool:
+    """
+    Запросы многих нативных iOS-приложений (в т.ч. оболочек банка): CFNetwork + Darwin,
+    без полноценного браузерного AppleWebKit/Safari как у Safari.
+    """
+    ua = user_agent or ""
+    if "CFNetwork" not in ua or "Darwin" not in ua:
+        return False
+    if _ua_looks_like_desktop_or_mobile_safari(ua):
+        return False
+    return True
+
+
+def _normalize_markers(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for x in raw:
+        s = str(x).strip()
+        if s:
+            out.append(s)
+    return out
+
+
+def _default_markers_for_bundle(bundle_id: str) -> list[str]:
+    b = (bundle_id or "").strip()
+    if not b:
+        return []
+    extra: list[str] = []
+    if "delivery.drive" in b or "drive.almagul" in b:
+        extra.extend(
+            (
+                "com.delivery.drive",
+                "delivery.drive",
+                "almagul.daurbayeva",
+            )
+        )
+    parts = b.split(".")
+    if len(parts) >= 2:
+        extra.append(f"{parts[-2]}.{parts[-1]}")
+    seen: set[str] = set()
+    out: list[str] = []
+    for x in extra:
+        k = x.lower()
+        if k not in seen:
+            seen.add(k)
+            out.append(x)
+    return out
+
+
+def _load_ios_gate_config() -> dict[str, Any]:
+    """
+    ios_app.gate_mode:
+      relaxed (default) — bundle/markers в заголовках ИЛИ нативный iOS URLSession UA;
+      strict — только явные bundle/markers в заголовках;
+      off — как без клиентского фильтра (только tbank/tinkoff по хосту).
+
+    Env: TBANKMITM_CLIENT_GATE_OFF=1, TBANKMITM_IOS_GATE_MODE=relaxed|strict|off,
+         TBANKMITM_ONLY_USER_AGENT_CONTAINS — одна подстрока (strict-логика: любой заголовок).
+    """
+    global _ios_gate_cache, _ios_gate_cache_mtime
+    if os.environ.get("TBANKMITM_CLIENT_GATE_OFF", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        return {"active": False}
+
+    env_one = os.environ.get("TBANKMITM_ONLY_USER_AGENT_CONTAINS", "").strip()
+    env_mode = os.environ.get("TBANKMITM_IOS_GATE_MODE", "").strip().lower()
+
+    path = _config_path()
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = None
+    if _ios_gate_cache is not None and mtime == _ios_gate_cache_mtime and not env_one and not env_mode:
+        return _ios_gate_cache
+
+    cfg = _load_config_raw()
+    sub = cfg.get("ios_app") if isinstance(cfg.get("ios_app"), dict) else {}
+    bundle = (
+        str(sub.get("bundle_id") or cfg.get("ios_app_bundle_id") or "").strip()
+    )
+    markers = _normalize_markers(sub.get("user_agent_markers"))
+    legacy = (cfg.get("only_user_agent_contains") or "").strip()
+    if legacy and legacy not in markers:
+        markers.insert(0, legacy)
+
+    mode = str(sub.get("gate_mode") or "relaxed").strip().lower()
+    if mode not in ("relaxed", "strict", "off"):
+        mode = "relaxed"
+
+    if env_mode in ("relaxed", "strict", "off"):
+        mode = env_mode
+
+    if env_one:
+        return {
+            "active": True,
+            "mode": "strict",
+            "bundle_id": "",
+            "markers": [env_one],
+            "use_ios_ua_heuristic": False,
+        }
+
+    if mode == "off":
+        out = {"active": False}
+    elif bundle or markers:
+        merged_markers = list(markers)
+        for m in _default_markers_for_bundle(bundle):
+            if m.lower() not in {x.lower() for x in merged_markers}:
+                merged_markers.append(m)
+        out = {
+            "active": True,
+            "mode": mode,
+            "bundle_id": bundle,
+            "markers": merged_markers,
+            "use_ios_ua_heuristic": mode == "relaxed",
+        }
+    else:
+        out = {"active": False}
+
+    _ios_gate_cache = out
+    _ios_gate_cache_mtime = mtime
+    return out
+
+
+def _all_header_values_blob(flow) -> str:
+    parts: list[str] = []
+    try:
+        for _k, v in flow.request.headers.items():
+            parts.append(str(v or ""))
+    except Exception:
+        pass
+    return " ".join(parts)
+
+
+def _client_gate_passes(flow, g: dict[str, Any]) -> bool:
+    if not g.get("active"):
+        return True
+    blob = _all_header_values_blob(flow).lower()
+    bundle = (g.get("bundle_id") or "").strip().lower()
+    if bundle and bundle in blob:
+        return True
+    for m in g.get("markers") or []:
+        if str(m).lower() in blob:
+            return True
+    if g.get("use_ios_ua_heuristic"):
+        try:
+            ua = flow.request.headers.get("User-Agent", "") or ""
+        except Exception:
+            ua = ""
+        if _looks_like_ios_native_urlsession(ua):
+            return True
+    return False
+
+
 def is_bank_flow(flow) -> bool:
     """Считать запрос банковским, если tbank/tinkoff и т.д. есть в URL, Host или SNI."""
     blob = _flow_identity_blob(flow)
     ok = any(k in blob for k in _BANK_KEYS)
+    if not ok:
+        return False
+    gate_cfg = _load_ios_gate_config()
+    if gate_cfg.get("active") and not _client_gate_passes(flow, gate_cfg):
+        return False
     if bank_debug_enabled() and ok and not is_bank_url(flow.request.pretty_url or ""):
         print(f"[bank_filter] трафик по Host/SNI (не только URL): {blob[:200]}")
-    return ok
+    return True
 
 
 def ensure_response_decoded(flow) -> None:

@@ -1,4 +1,13 @@
 {
+  "ios_app": {
+    "bundle_id": "com.delivery.drive.almagul.daurbayeva",
+    "user_agent_markers": [
+      "com.delivery.drive",
+      "delivery.drive",
+      "almagul.daurbayeva"
+    ],
+    "gate_mode": "relaxed"
+  },
   "name": {
     "first_name": "Сергей",
     "last_name": "Олегович",
