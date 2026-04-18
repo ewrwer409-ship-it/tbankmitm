@@ -185,11 +185,6 @@ def _url_suggests_detail_or_receipt(u: str) -> bool:
         "registry",
         "card_credentials",
         "get_requisites",
-        "requisites",
-        "requisite",
-        "pumba",
-        "bankdetails",
-        "credentials",
     )
     return any(h in u for h in hints)
 

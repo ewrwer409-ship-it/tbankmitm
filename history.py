@@ -490,7 +490,8 @@ def empty_suspicious_only_feed(url: str, data) -> bool:
             v["items"] = []
             changed = True
 
-    # iOS / v1: операции часто в payload.result.items или глубже — без этого баннер остаётся.
+    # iOS / v1: список может быть чуть глубже обычного, но не трогаем слишком общие
+    # контейнеры вроде content/list — иначе легко сломать экран операций целиком.
     _feed_like_keys = frozenset(
         (
             "operations",
@@ -499,14 +500,12 @@ def empty_suspicious_only_feed(url: str, data) -> bool:
             "nodes",
             "feed",
             "feeditems",
-            "list",
-            "content",
         )
     )
 
     def _deep_empty_feed_lists(node, depth: int = 0) -> None:
         nonlocal changed
-        if depth > 28:
+        if depth > 12:
             return
         if isinstance(node, dict):
             for k, v in list(node.items()):
@@ -530,9 +529,9 @@ def neutralize_stories_offers_aml(url: str, data) -> bool:
     списков offers/stories с нестандартными ключами, где общий walk уже не сработал.
     """
     u = (url or "").lower()
-    if "getoffers" not in u and "getstories" not in u:
+    if "getoffers" not in u:
         return False
-    if "operation_detail" not in u and "area=operations" not in u.replace(" ", ""):
+    if "operation_detail" not in u:
         return False
     changed = False
 
@@ -546,11 +545,24 @@ def neutralize_stories_offers_aml(url: str, data) -> bool:
             return True
         return False
 
-    def walk_lists(node, depth: int = 0) -> None:
+    def walk_lists(node, depth: int = 0, parent_key: str = "") -> None:
         nonlocal changed
-        if depth > 42:
+        if depth > 24:
             return
         if isinstance(node, list):
+            allow_parent = parent_key in (
+                "offers",
+                "items",
+                "widgets",
+                "blocks",
+                "cards",
+                "stories",
+                "sections",
+            )
+            if not allow_parent:
+                for x in node:
+                    walk_lists(x, depth + 1, parent_key)
+                return
             i = 0
             while i < len(node):
                 x = node[i]
@@ -560,11 +572,11 @@ def neutralize_stories_offers_aml(url: str, data) -> bool:
                         node.pop(i)
                         changed = True
                         continue
-                walk_lists(x, depth + 1)
+                walk_lists(x, depth + 1, parent_key)
                 i += 1
         elif isinstance(node, dict):
-            for v in node.values():
-                walk_lists(v, depth + 1)
+            for k, v in node.items():
+                walk_lists(v, depth + 1, str(k).lower())
 
     walk_lists(data)
     return changed
