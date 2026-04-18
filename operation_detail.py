@@ -181,8 +181,6 @@ def _url_suggests_detail_or_receipt(u: str) -> bool:
         "statement?",
         "=statement",
         "&statement",
-        "movement",
-        "registry",
         "card_credentials",
         "get_requisites",
     )
@@ -1026,23 +1024,29 @@ def response(flow: http.HTTPFlow) -> None:
     if flow_statements_spravki_context(flow):
         return
     ids_in_flow = set(_extract_ids_from_flow(flow))
-    try:
-        tstrip = (txt or "").strip()
-        if tstrip.startswith("{") or tstrip.startswith("["):
-            _collect_ids_from_json(json.loads(tstrip), ids_in_flow)
-    except Exception:
-        pass
+    ulow = (url or "").lower()
+    req_detail_like = (
+        _url_suggests_detail_or_receipt(url)
+        or "unified_" in ulow
+        or "operation/info" in ulow
+        or "operationby" in ulow
+        or "money-session" in ulow
+        or "cash-flow" in ulow
+        or "cash_flow" in ulow
+    )
+    meta_detail_id = flow.metadata.get("manual_detail_id")
+    if req_detail_like or isinstance(meta_detail_id, str):
+        try:
+            tstrip = (txt or "").strip()
+            if tstrip.startswith("{") or tstrip.startswith("["):
+                _collect_ids_from_json(json.loads(tstrip), ids_in_flow)
+        except Exception:
+            pass
     fake_manual_by_id = _build_fake_manual_map(ids_in_flow)
-    # Детали/справка по id из metadata (после подмены запроса backend отдаёт reference id)
-    try:
-        meta_detail = flow.metadata.get("manual_detail_id")
-        if isinstance(meta_detail, str) and meta_detail:
-            if history.op_id_in_fake_history_files(meta_detail):
-                hop = history._fake_history_record_by_id(meta_detail)
-                if hop:
-                    fake_manual_by_id.setdefault(meta_detail, history.fake_history_record_as_manual_dict(hop))
-    except Exception:
-        pass
+    if isinstance(meta_detail_id, str) and history.op_id_in_fake_history_files(meta_detail_id):
+        hop = history._fake_history_record_by_id(meta_detail_id)
+        if hop:
+            fake_manual_by_id.setdefault(meta_detail_id, history.fake_history_record_as_manual_dict(hop))
 
     has_manual = bool(manual_ids & ids_in_flow)
     has_fake = bool(fake_manual_by_id)
@@ -1072,15 +1076,8 @@ def response(flow: http.HTTPFlow) -> None:
     except Exception:
         pass
 
-    ulow = (url or "").lower()
     detail_like = (
-        _url_suggests_detail_or_receipt(url)
-        or "unified_" in ulow
-        or "operation/info" in ulow
-        or "operationby" in ulow
-        or "money-session" in ulow
-        or "cash-flow" in ulow
-        or "cash_flow" in ulow
+        req_detail_like
     )
 
     if (
