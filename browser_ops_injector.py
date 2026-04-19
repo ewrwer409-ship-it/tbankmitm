@@ -489,8 +489,9 @@ def _build_script() -> str:
 
   /* Включать с browser_finanalytics_dom_patch в config.json; главная /mybank патчится всегда (см. applyFinanalyticsFromTotals). */
   function shouldPatchFinanalyticsDom() {{
-    if (!ENABLE_BROWSER_FIN_DOM_PATCH) return false;
     if (!shouldSyncFinanalyticsCards()) return false;
+    if (isMybankAccountProductPage()) return true;
+    if (!ENABLE_BROWSER_FIN_DOM_PATCH) return false;
     const ua = navigator.userAgent || '';
     if (/iPhone|iPad|iPod|Android|Mobile/i.test(ua)) return true;
     if (document.querySelector('[data-qa-type="mobile-pumba-payment-history"]')) return true;
@@ -736,6 +737,44 @@ def _build_script() -> str:
     return out;
   }}
 
+  function collectAnyFinChartCards() {{
+    const out = [];
+    document.querySelectorAll('[data-qa-type="click-area"]').forEach(function (card) {{
+      if (card.querySelector('[data-qa-type="chart-card-line-chart"]')) out.push(card);
+    }});
+    return out;
+  }}
+
+  function detectFinChartCardKind(card) {{
+    if (!card) return '';
+    const qa = String(card.getAttribute('data-qa-type') || '').toLowerCase();
+    if (qa.indexOf('earning') !== -1 || qa.indexOf('income') !== -1) return 'income';
+    if (qa.indexOf('spending') !== -1 || qa.indexOf('expense') !== -1) return 'spending';
+    const txt = normalizeUiText(card.innerText || '').toLowerCase();
+    if (txt.indexOf('доход') !== -1) return 'income';
+    if (txt.indexOf('трат') !== -1 || txt.indexOf('расход') !== -1) return 'spending';
+    return '';
+  }}
+
+  function patchAccountProductFinCardsFallback(inc, exp, wholeRubHome) {{
+    if (!isMybankAccountProductPage()) return;
+    const cards = collectAnyFinChartCards();
+    if (!cards.length) return;
+    cards.forEach(function (card, idx) {{
+      let kind = detectFinChartCardKind(card);
+      if (!kind) {{
+        if (cards.length === 1) kind = 'spending';
+        else if (idx === 0) kind = 'spending';
+        else if (idx === 1) kind = 'income';
+      }}
+      if (kind === 'income') {{
+        patchFinanalyticsCard(card, inc, 'Нет доходов', 'Доходы', true, wholeRubHome);
+      }} else if (kind === 'spending') {{
+        patchFinanalyticsCard(card, exp, 'Нет трат', 'Траты', false, wholeRubHome);
+      }}
+    }});
+  }}
+
   function patchFinanalyticsCard(card, val, emptyText, subtitleLabel, isIncome, wholeRubHome) {{
     if (!card) return;
     const amountWrap = findFinCardAmountWrap(card);
@@ -831,8 +870,6 @@ def _build_script() -> str:
       '[data-manual-debit-account-ph="1"] [data-qa-type="moneyAmount"] [data-qa-type="uikit/money"],' +
       '[data-manual-debit-account-ph="1"] [data-qa-type="moneyAmount"] [data-qa-type="uikit/money"] span {{ font: var(--tui-font-text-mobile-m-bold, 600 15px/1.43 var(--tui-font-text, Roboto), system-ui, sans-serif); color: var(--tds-color-text-01, #000000) !important; -webkit-text-fill-color: var(--tds-color-text-01, #000000); margin: 0; }}' +
       '[data-manual-debit-account-ph="1"] [data-qa-type="lineChart"] {{ margin-top: var(--pumba-payment-history-progressLine-padding-top, 12px); width: 100%; isolation: isolate; }}' +
-      '[data-manual-debit-account-ph="1"] [data-qa-type="lineChart"] [data-qa-type^="lineChart.filler"] {{ opacity: 1 !important; visibility: visible !important; }}' +
-      '[data-manual-debit-account-ph="1"] [data-qa-type="lineChart"] [class*="Mee5y"] [data-qa-type="lineChart.bar"] {{ opacity: 1 !important; border-radius: 9999px; }}' +
       '[data-manual-debit-account-ph="1"] [data-manual-ph-line] {{ color: rgba(0,0,0,0.78) !important; }}' +
       '[data-manual-debit-account-ph="1"] [data-manual-ph-amt] {{ color: rgba(0,0,0,0.92) !important; font-weight: 600; }}';
     let st4 = document.getElementById('manual-luca-account-blocks-styles');
@@ -1368,8 +1405,9 @@ def _build_script() -> str:
       try {{ ensureHomeFinReassertObserver(); }} catch (eHf) {{}}
     }}
     const onHome = isMybankRootPath();
-    if (!onHome && !ENABLE_BROWSER_FIN_DOM_PATCH) return;
-    if (onHome || shouldPatchFinanalyticsDom()) {{
+    const onAccountProduct = isMybankAccountProductPage();
+    if (!onHome && !onAccountProduct && !ENABLE_BROWSER_FIN_DOM_PATCH) return;
+    if (onHome || onAccountProduct || shouldPatchFinanalyticsDom()) {{
       collectSpendingFinCards().forEach(function (c) {{
         patchFinanalyticsCard(c, exp, 'Нет трат', 'Траты', false, onHome);
       }});
@@ -1378,6 +1416,7 @@ def _build_script() -> str:
       earnCards.forEach(function (c) {{
         patchFinanalyticsCard(c, inc, 'Нет доходов', 'Доходы', true, onHome);
       }});
+      patchAccountProductFinCardsFallback(inc, exp, onHome);
     }}
   }}
 

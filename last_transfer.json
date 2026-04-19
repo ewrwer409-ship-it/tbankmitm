@@ -15,7 +15,144 @@
   "payment_id": "0393228931199425",
   "timestamp_ms": 1774047600246,
   "transfer_completed": true,
-  "fake_history": [],
+  "fake_history": [
+    {
+      "id": "UNIFIED_1776358055809",
+      "operationId": {
+        "value": "UNIFIED_1776358055809",
+        "source": "PrimeAuth"
+      },
+      "isExternalCard": false,
+      "account": "5860068322",
+      "card": "383947501",
+      "ucid": "1386102627",
+      "cardNumber": "220070******6404",
+      "authorizationId": "UNIFIED_1776358055809",
+      "operationTime": {
+        "milliseconds": 1776358055809
+      },
+      "debitingTime": {
+        "milliseconds": 1776358055809
+      },
+      "type": "Debit",
+      "status": "OK",
+      "amount": {
+        "value": 20000,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "accountAmount": {
+        "value": 20000,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "cashback": 0.0,
+      "cashbackAmount": {
+        "value": 0.0,
+        "currency": {
+          "code": 643,
+          "name": "RUB",
+          "strCode": "643"
+        }
+      },
+      "idSourceType": "Prime",
+      "mcc": 0,
+      "mccString": "0000",
+      "description": "Светлана Д.",
+      "category": {
+        "id": "45",
+        "name": "Другое"
+      },
+      "brand": {
+        "id": "11250",
+        "name": "Светлана Д.",
+        "logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vcmFpZmZlaXNlbi5wbmc=",
+        "baseColor": "f12e16",
+        "fileLink": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vcmFpZmZlaXNlbi5wbmc="
+      },
+      "spendingCategory": {
+        "id": "24",
+        "name": "Переводы",
+        "icon": "transfers-c1",
+        "baseColor": "4FC5DF"
+      },
+      "senderDetails": "",
+      "subcategory": "Светлана Д.",
+      "loyaltyBonus": [],
+      "loyaltyPayment": [],
+      "loyaltyBonusSummary": {
+        "amount": 0.0
+      },
+      "categoryInfo": {
+        "bankCategory": {
+          "id": "24",
+          "language": "ru",
+          "name": "Переводы",
+          "baseColor": "4FC5DF",
+          "fileLink": "https://brands-prod.cdn-tinkoff.ru/general_logo/transfers-c1.png"
+        },
+        "metacategory": {
+          "id": "12",
+          "language": "ru",
+          "name": "Финансы",
+          "baseColor": "14B8AF",
+          "fileLink": "https://bms-logo-prod.t-static.ru/general_logo/finance-3-meta.png"
+        },
+        "criteria": {
+          "bulkVariety": {
+            "type": "Description",
+            "value": "Светлана Д."
+          }
+        }
+      },
+      "group": "TRANSFER",
+      "subgroup": {
+        "id": "F1",
+        "name": "Переводы"
+      },
+      "offers": [],
+      "cardPresent": false,
+      "isHce": false,
+      "isSuspicious": false,
+      "virtualPaymentType": 0,
+      "hasStatement": true,
+      "hasShoppingReceipt": false,
+      "additionalInfo": [
+        {
+          "fieldName": "Тип перевода",
+          "fieldValue": "Система быстрых платежей"
+        }
+      ],
+      "isDispute": false,
+      "operationTransferred": false,
+      "isOffline": false,
+      "icon": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vcmFpZmZlaXNlbi5wbmc=",
+      "analyticsStatus": "NotSpecified",
+      "isTemplatable": false,
+      "trancheCreationAllowed": false,
+      "merchantKey": "FAKE_SBP_DEBIT_UNIFIED_1776358055809",
+      "posId": "585",
+      "typeSerno": 151,
+      "tags": [],
+      "isInner": false,
+      "isAuto": false,
+      "merges": [],
+      "documents": [
+        "Statement"
+      ],
+      "pdf_path": "receipt_UNIFIED_1776_20260416_194735.pdf",
+      "date_full": "16.04.2026, 19:47:35",
+      "receiver_phone": "+7 (927) 406-25-65",
+      "receiver_name": "Светлана Д.",
+      "bank_receiver": "Райффайзенбанк"
+    }
+  ],
   "bank_logo": "https://imgproxy.cdn-tinkoff.ru/compressed95/aHR0cHM6Ly9icmFuZHMtcHJvZC5jZG4tdGlua29mZi5ydS9nZW5lcmFsX2xvZ28vcmFpZmZlaXNlbi5wbmc=",
   "merchant_name": null,
   "merchant_logo": null,
